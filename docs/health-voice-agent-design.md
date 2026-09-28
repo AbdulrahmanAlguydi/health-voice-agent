@@ -1,6 +1,6 @@
 # Bilingual Hospital Appointment Voice Agent — Prototype Design
 
-Date: 2026-09-28
+Status: Living design document and primary source of truth for the prototype.
 
 ## Goal
 
