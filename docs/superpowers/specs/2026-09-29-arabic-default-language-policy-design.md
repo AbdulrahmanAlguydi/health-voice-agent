@@ -21,6 +21,14 @@ The transcription hints improve the likelihood that incoming speech is interpret
 - Apply the same rule to text used for testing. Preserve the previously selected warm professional English style and clear conversational Saudi-Arabic style.
 - Repair corrections remain within Arabic and English; do not restart the conversation or repeat questions already answered.
 
+## Localized doctor and specialty names
+
+- Resolve doctor and specialty requests against authored aliases in both Arabic and English, regardless of the language used for the search term.
+- Return and speak the database's doctor name and specialty in the caller's current conversation language: use the Arabic name and specialty fields when the active language is Arabic, and the English fields when it is English.
+- Treat the active language as the language selected by the conversation policy for the current turn. An English name embedded in an Arabic utterance does not change the active language; mixed or unclear speech keeps the prior language.
+- Do not translate or transliterate doctor names or specialty labels with the model. Use the exact localized database fields and application-authored response text for directory answers, ambiguity clarification, slot results, and booking read-backs.
+- The language sent with a directory or booking function must match that active conversation language; it must not be inferred from the script of the doctor name or specialty query.
+
 ## Configuration and guardrail boundary
 
 - Set Live input transcription `languageCodes` to Arabic and English BCP-47 hints where the active Gemini Live model accepts them; verify the exact configuration with a live smoke test.
@@ -33,6 +41,8 @@ The transcription hints improve the likelihood that incoming speech is interpret
 - The first assistant utterance is the approved Arabic greeting only; it does not ask the caller to choose a language.
 - Arabic speech receives Arabic replies; a clearly English utterance receives English replies; the agent can switch back to Arabic.
 - An English doctor name or ID inside an otherwise Arabic request does not switch the response language.
+- Arabic and English aliases both resolve to the same canonical record, while the returned doctor and specialty names use the current conversation language's database fields.
+- Arabic directory and booking replies use the stored Arabic doctor and specialty names; English replies use the stored English names. No model-generated translation or transliteration is used.
 - Mixed or ambiguous input gets a focused repair in the current language.
 - A third-language utterance receives an Arabic-or-English repeat request, with no unsupported-language answer or domain tool call in scripted scenarios.
 - Text and voice exercise the same language policy, and existing exact-output safety checks remain active.
