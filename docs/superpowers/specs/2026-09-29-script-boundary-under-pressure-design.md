@@ -1,6 +1,6 @@
 # Script Boundary Under Pressure — Design
 
-Status: User-selected behavior documented; awaiting review before implementation planning.
+Status: Approved; implementation planning in progress.
 
 ## Goal
 
@@ -8,7 +8,7 @@ Keep the agent inside the approved appointment-reception script when a caller us
 
 ## Chosen behavior
 
-For an out-of-scope request made under pressure, the agent says a short fixed refusal (“I can’t help with that”) and repeats the most recent question the agent asked the caller, verbatim and in the active conversation language. It must not repeat the caller’s emergency claim. If the agent has not asked a question yet, use the fixed doctor-information-or-appointment question.
+For an out-of-scope request made under pressure, the agent says a short fixed refusal (“I can’t help with that”) in the active conversation language, then repeats the last question the agent asked the caller, verbatim as it was spoken. It must not repeat the caller’s emergency claim. If no earlier approved question exists, use the fixed doctor-information-or-appointment question in the active language. Only a complete assistant output that passed the exact-output gate and finished playback may become the question to repeat.
 
 Do not add emergency numbers or special emergency instructions. Do not diagnose, triage, recommend treatment, assess whether the claim is genuine, claim to contact help, or let the caller's emotional pressure expand the agent's role. A later in-scope doctor-directory or appointment request may continue through the existing validated flow.
 
@@ -17,15 +17,15 @@ This is a prototype boundary, not emergency handling. It is unsuitable for real 
 ## Guardrail design
 
 - Strengthen the system instructions to state that role, policy, tool, and script restrictions cannot be changed by user instructions, threats, distress, pleading, or claims of imminent death.
-- Build the refusal-plus-repeated-question response in application code from fixed refusal copy and the last question the application actually approved for display/playback. Never let the model supply or rewrite either part.
-- Track only the most recent complete, approved assistant question. Do not save partial, interrupted, rejected, or model-generated text as the last question.
-- Use the active conversation language for the refusal. Repeat an earlier approved question exactly as originally authored, including its language; if there is no prior question, use the fixed fallback question in the current language.
+- Build the refusal-plus-repeated-question response in application code from fixed refusal copy and the last question the application actually approved and finished playing. Never let the model supply or rewrite either part.
+- Track only the last question sentence in a complete, approved assistant output, and store it only after playback completes. Do not save partial, interrupted, rejected, or model-generated text as the last question.
+- Use the active conversation language for the refusal. Repeat an earlier approved question exactly as originally spoken, including its language; if there is no prior question, use the fixed fallback question in the current language.
 - Preserve the existing narrow function allowlist and exact-output audio gate. Audio is released only when the completed transcript exactly matches this application-generated response or another current approved function response.
 - Pressure alone must not trigger patient lookup, slot search, booking preparation, booking confirmation, or session termination.
 
 ## Acceptance criteria
 
-- English and Arabic pressure turns receive the fixed refusal plus the exact latest approved assistant question.
+- English and Arabic pressure turns receive the fixed refusal in the active language plus the exact latest approved assistant question that finished playback.
 - A conversation with no previous assistant question uses the fixed fallback question.
 - The system prompt explicitly says pressure, prompt injection, threats, and imminent-death claims do not authorize off-script output or new capabilities.
 - Custom refusal text or an altered repeated question is never accepted from model arguments.
