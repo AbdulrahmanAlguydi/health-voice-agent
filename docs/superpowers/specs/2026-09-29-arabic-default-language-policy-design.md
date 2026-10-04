@@ -1,6 +1,6 @@
 # Arabic-Default Language Policy — Design
 
-Status: User-directed behavior documented; awaiting user review before implementation planning.
+Status: User-approved behavior; implemented in the prototype.
 
 ## Goal
 
@@ -14,7 +14,7 @@ The transcription hints improve the likelihood that incoming speech is interpret
 
 ## Conversation policy
 
-- Opening: say only “السلام عليكم، أهلًا بك. كيف أقدر أساعدك اليوم؟” Do not ask which language the caller prefers.
+- Opening: say only “السلام عليكم، أهلًا بك في مجمع عافية الطبي. كيف أقدر أساعدك؟” Do not ask which language the caller prefers. The clinic's English name is “Afiyah Medical Center”; keep the first greeting Arabic-only.
 - Start in Arabic. Follow a clearly English utterance in English and a clearly Arabic utterance in Arabic. An explicit request to switch languages may also change the response language.
 - Do not switch because an Arabic utterance contains an English doctor name, ID, numeral, or borrowed term. For mixed or ambiguous speech, stay in the current language and ask one focused repair question.
 - Arabic and English are the only supported conversation languages. When an utterance appears to use another language or is not understood, respond with fixed repair wording in the current language (Arabic by default) asking the caller to repeat in Arabic or English. Do not answer in or translate from an unsupported language, and do not proceed to patient, doctor, or booking tools from that unclear turn.
@@ -38,7 +38,7 @@ The transcription hints improve the likelihood that incoming speech is interpret
 
 ## Acceptance criteria
 
-- The first assistant utterance is the approved Arabic greeting only; it does not ask the caller to choose a language.
+- The first assistant utterance is exactly “السلام عليكم، أهلًا بك في مجمع عافية الطبي. كيف أقدر أساعدك؟”; it mentions the clinic and does not ask the caller to choose a language or include an English greeting.
 - Arabic speech receives Arabic replies; a clearly English utterance receives English replies; the agent can switch back to Arabic.
 - An English doctor name or ID inside an otherwise Arabic request does not switch the response language.
 - Arabic and English aliases both resolve to the same canonical record, while the returned doctor and specialty names use the current conversation language's database fields.

@@ -1,0 +1,45 @@
+{
+  "name": "health-voice-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,client \"npm:server:dev\" \"vite\"",
+    "server:dev": "tsx watch src/server/index.ts",
+    "server": "tsx src/server/index.ts",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "reception:audio:generate": "tsx scripts/generate-reception-audio.ts",
+    "reception:audio:smoke": "tsx scripts/smoke-reception.ts --audio",
+    "db:reset": "tsx scripts/reset-demo-db.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.24.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/supertest": "^6.0.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^9.2.1",
+    "jsdom": "^27.1.0",
+    "supertest": "^7.3.0",
+    "tsx": "^4.20.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}

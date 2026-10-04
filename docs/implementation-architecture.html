@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Afiyah voice agent — current implementation</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    :root { --paper:#f5f5f5; --ink:#2d3142; --muted:#4f5d75; --soft:#7a8399; --rule:rgba(45,49,66,.12); --accent:#eb6c36; --link:#2e5aa8; --sans:'Geist',system-ui,sans-serif; --mono:'Geist Mono',ui-monospace,monospace; }
+    body { margin:0; padding:40px 32px; background:var(--paper); color:var(--ink); font-family:var(--sans); }
+    main { max-width:1280px; margin:auto; }
+    .eyebrow { font:500 11px var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin:0 0 10px; }
+    h1 { font:400 38px/1.15 'Instrument Serif',Georgia,serif; margin:0 0 12px; }
+    .intro { max-width:900px; margin:0; font-size:15px; line-height:1.7; color:var(--muted); }
+    .figure { overflow-x:auto; }
+    svg { display:block; width:100%; }
+    svg text { font-family:var(--sans); fill:var(--ink); }
+    .name { font-size:12px; font-weight:600; }
+    .body { font-size:10px; fill:var(--muted); }
+    .tech { font:9px var(--mono); fill:var(--muted); }
+    .tag { font:500 8px var(--mono); letter-spacing:.12em; fill:var(--muted); }
+    .edge { font:8px var(--mono); letter-spacing:.04em; fill:var(--muted); text-anchor:middle; }
+    .details { display:grid; grid-template-columns:1.25fr 1fr; gap:24px; margin-top:0; }
+    .card { background:white; border:1px solid var(--rule); border-radius:6px; padding:24px; }
+    h2 { font-size:17px; font-weight:600; margin:0 0 14px; }
+    h3 { font-size:13px; margin:18px 0 8px; }
+    p, li { font-size:13px; line-height:1.7; }
+    .card p { margin:8px 0; color:var(--muted); }
+    code { font:11px/1.7 var(--mono); overflow-wrap:anywhere; }
+    .functions { margin:0; display:grid; gap:14px; }
+    .functions dt { font-size:13px; font-weight:600; margin-bottom:4px; }
+    .functions dd { margin:0; line-height:1.8; color:var(--muted); }
+    .note { margin:24px 0; padding-left:16px; border-left:2px solid var(--accent); }
+    footer { padding-top:16px; margin-top:28px; border-top:1px solid var(--rule); color:var(--muted); font:10px/1.8 var(--mono); }
+    @media (max-width:760px) { body { padding:24px 16px; } .details { grid-template-columns:1fr; } h1 { font-size:30px; } svg { min-width:1000px; } }
+    @media print { body { padding:0; } svg { min-width:0; } .card { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Current implementation · Architecture · Afiyah Medical Center</p>
+  <h1>One voice model. App-controlled booking.</h1>
+  <p class="intro">Gemini handles the Arabic/English conversation and requests functions. The browser executes those requests through the application; the server reads and writes the database. Gemini never connects to SQLite directly.</p>
+  <div class="figure">
+    <svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="implementation-architecture-title implementation-architecture-desc">
+      <title id="implementation-architecture-title">Afiyah voice agent implementation architecture</title>
+      <desc id="implementation-architecture-desc">The browser exchanges speech and function calls with Gemini Live, executes validated application functions through an Express API, stores confirmed appointments in SQLite, and checks generated booking-status wording before playback.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      </defs>
+      <rect width="1280" height="720" fill="#f5f5f5"/>
+      <text x="64" y="80" class="tag">READ LEFT TO RIGHT · SPEECH PATH ABOVE / DATABASE PATH BELOW</text>
+      <text x="64" y="108" class="body">The patient's microphone or typed message is input. There is no separate STT → text model → TTS pipeline.</text>
+
+      <!-- Zones first: four browser components, two server components. -->
+      <rect x="40" y="160" width="536" height="448" rx="8" fill="rgba(45,49,66,.02)" stroke="rgba(45,49,66,.12)"/>
+      <rect x="56" y="168" width="216" height="16" fill="#f5f5f5"/>
+      <text x="64" y="180" class="tag">PATIENT'S BROWSER · REACT / VITE</text>
+      <rect x="592" y="368" width="648" height="240" rx="8" fill="rgba(45,49,66,.02)" stroke="rgba(45,49,66,.12)"/>
+      <rect x="608" y="376" width="172" height="16" fill="#f5f5f5"/>
+      <text x="616" y="388" class="tag">LOCAL NODE.JS SERVER</text>
+
+      <!-- Every connector is orthogonal and has its own attachment point. -->
+      <g fill="none" stroke="#4f5d75" stroke-width="1.2">
+        <path d="M244 252 H304" marker-end="url(#arrow)"/>
+        <path d="M364 332 V360 Q364 368 356 368 H160 Q152 368 152 376 V416" marker-end="url(#arrow)"/>
+        <path d="M116 416 V332" marker-end="url(#arrow)"/>
+        <path d="M428 332 V416" marker-end="url(#arrow)"/>
+        <path d="M460 416 V332" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+        <path d="M304 488 H244" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+        <path d="M864 460 H936" marker-end="url(#arrow)"/>
+        <path d="M936 504 H864" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      </g>
+      <g fill="none" stroke="#2e5aa8" stroke-width="1.2">
+        <path d="M544 252 H904" marker-end="url(#arrow-link)"/>
+        <path d="M904 296 H544" stroke-dasharray="4 3" marker-end="url(#arrow-link)"/>
+        <path d="M544 460 H624" marker-end="url(#arrow-link)"/>
+        <path d="M624 504 H544" stroke-dasharray="4 3" marker-end="url(#arrow-link)"/>
+      </g>
+
+      <!-- Masked labels sit clear of their strokes and adjacent nodes. -->
+      <g>
+        <rect x="248" y="232" width="48" height="12" fill="#f5f5f5"/><text x="272" y="241" class="edge">INPUT</text>
+        <rect x="664" y="232" width="120" height="12" fill="#f5f5f5"/><text x="724" y="241" class="edge">INPUT /RESULTS</text>
+        <rect x="656" y="276" width="136" height="12" fill="#f5f5f5"/><text x="724" y="285" class="edge">VOICE / CALLS</text>
+        <rect x="216" y="348" width="96" height="12" fill="#f5f5f5"/><text x="264" y="357" class="edge">GENERATED REPLY</text>
+        <rect x="48" y="368" width="60" height="12" fill="#f5f5f5"/><text x="78" y="377" class="edge">PLAY / SHOW</text>
+        <rect x="364" y="388" width="56" height="12" fill="#f5f5f5"/><text x="392" y="397" class="edge">EXECUTE</text>
+        <rect x="468" y="356" width="76" height="12" fill="#f5f5f5"/><text x="506" y="365" class="edge">RESULTS</text>
+        <rect x="252" y="468" width="44" height="12" fill="#f5f5f5"/><text x="274" y="477" class="edge">STATE</text>
+        <rect x="560" y="440" width="48" height="12" fill="#f5f5f5"/><text x="584" y="449" class="edge">HTTP</text>
+        <rect x="560" y="484" width="48" height="12" fill="#f5f5f5"/><text x="584" y="493" class="edge">DATA</text>
+        <rect x="880" y="440" width="40" height="12" fill="#f5f5f5"/><text x="900" y="449" class="edge">SQL</text>
+        <rect x="872" y="484" width="56" height="12" fill="#f5f5f5"/><text x="900" y="493" class="edge">RECORDS</text>
+      </g>
+
+      <!-- Nodes: opaque fills keep the routes visible only between components. -->
+      <g>
+        <rect x="64" y="220" width="180" height="112" rx="6" fill="#f5f5f5"/>
+        <rect x="64" y="220" width="180" height="112" rx="6" fill="rgba(79,93,117,.10)" stroke="#7a8399"/>
+        <text x="80" y="240" class="tag">USER INTERFACE</text>
+        <text x="80" y="264" class="name">Patient web app</text>
+        <text x="80" y="284" class="body">Microphone + text input</text>
+        <text x="80" y="300" class="body">Chat, playback + replay</text>
+        <text x="80" y="316" class="body">Persistent session bubbles</text>
+
+        <rect x="304" y="220" width="240" height="112" rx="6" fill="white" stroke="#2d3142"/>
+        <text x="320" y="240" class="tag">SESSION ORCHESTRATION</text>
+        <text x="320" y="264" class="name">Live session controller</text>
+        <text x="320" y="284" class="body">Voice stream, transcripts, turn tracking</text>
+        <text x="320" y="300" class="body">Routes function requests and results</text>
+        <text x="320" y="316" class="tech">session.ts · TurnCoordinator</text>
+
+        <rect x="904" y="188" width="320" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="904" y="188" width="320" height="144" rx="6" fill="rgba(235,108,54,.08)" stroke="#eb6c36" stroke-width="1.2"/>
+        <text x="920" y="208" class="tag">GOOGLE CLOUD · SINGLE MODEL</text>
+        <text x="920" y="232" class="name">Gemini Live</text>
+        <text x="920" y="252" class="tech">gemini-3.8-live · Fenrir</text>
+        <text x="920" y="272" class="body">Native Arabic / English speech-to-speech</text>
+        <text x="920" y="288" class="body">Prompt: reception style + scope guidelines</text>
+        <text x="920" y="304" class="body">Interprets caller intent; requests functions</text>
+        <text x="920" y="320" class="body">Also receives text and returns transcripts</text>
+
+        <rect x="64" y="416" width="180" height="144" rx="6" fill="white" stroke="#2d3142"/>
+        <text x="80" y="436" class="tag">LOCAL OUTPUT HANDLING</text>
+        <text x="80" y="460" class="name">Audio + status checks</text>
+        <text x="80" y="480" class="body">Buffer completed native audio</text>
+        <text x="80" y="496" class="body">Check booking-status claims</text>
+        <text x="80" y="512" class="body">Repair once via Live session</text>
+        <text x="80" y="528" class="body">Then play, or show fallback</text>
+        <text x="80" y="544" class="body">No general sentence verifier</text>
+
+        <rect x="304" y="416" width="240" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="304" y="416" width="240" height="144" rx="6" fill="rgba(235,108,54,.08)" stroke="#eb6c36" stroke-width="1.2"/>
+        <text x="320" y="436" class="tag">APPLICATION FUNCTIONS + CONTEXT</text>
+        <text x="320" y="460" class="name">Tool handler / booking state</text>
+        <text x="320" y="480" class="body">Validates arguments + allowed progress</text>
+        <text x="320" y="496" class="body">Found identity, fresh turns, delivered summary</text>
+        <text x="320" y="512" class="body">Owns selected slot + pending / booked state</text>
+        <text x="320" y="528" class="body">Returns bookingStage + next actions</text>
+        <text x="320" y="544" class="tech">tools.ts · see function groups below</text>
+
+        <rect x="624" y="416" width="240" height="144" rx="6" fill="white" stroke="#2d3142"/>
+        <text x="640" y="436" class="tag">BACKEND · EXPRESS</text>
+        <text x="640" y="460" class="name">Directory + booking API</text>
+        <text x="640" y="480" class="body">Structured requests; bilingual alias lookup</text>
+        <text x="640" y="496" class="body">Uncommitted drafts live in server memory</text>
+        <text x="640" y="512" class="body">Recheck expiry + current slot availability</text>
+        <text x="640" y="528" class="body">Save only on approved final confirmation</text>
+        <text x="640" y="544" class="tech">Node.js · /api/* · BookingService</text>
+
+        <rect x="936" y="416" width="240" height="144" rx="6" fill="#f5f5f5"/>
+        <rect x="936" y="416" width="240" height="144" rx="6" fill="rgba(45,49,66,.05)" stroke="#4f5d75"/>
+        <text x="952" y="436" class="tag">LOCAL PERSISTENT STORE</text>
+        <text x="952" y="460" class="name">SQLite database</text>
+        <text x="952" y="480" class="body">30 doctors / 10 specialties / bilingual aliases</text>
+        <text x="952" y="496" class="body">Patients, available slots + appointments</text>
+        <text x="952" y="512" class="body">Guest profile + booking saved atomically</text>
+        <text x="952" y="528" class="body">Committed records survive restarts</text>
+        <text x="952" y="544" class="tech">better-sqlite3 · local .sqlite file</text>
+      </g>
+
+      <line x1="40" y1="652" x2="1240" y2="652" stroke="rgba(45,49,66,.12)"/>
+      <text x="64" y="680" class="tag">LEGEND</text>
+      <line x1="148" y1="676" x2="184" y2="676" stroke="#4f5d75" marker-end="url(#arrow)"/>
+      <text x="196" y="680" class="body">Input / execution / storage</text>
+      <line x1="412" y1="676" x2="448" y2="676" stroke="#2e5aa8" marker-end="url(#arrow-link)"/>
+      <text x="460" y="680" class="body">Network request</text>
+      <line x1="628" y1="676" x2="664" y2="676" stroke="#4f5d75" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+      <text x="676" y="680" class="body">Return data / state</text>
+      <rect x="892" y="668" width="16" height="16" rx="2" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/>
+      <text x="920" y="680" class="body">Two focal components, not extra models</text>
+    </svg>
+  </div>
+
+  <section class="details" aria-label="Implementation details">
+    <div class="card">
+      <p class="eyebrow">Functions Gemini can request</p>
+      <h2>Real functions—not direct database access</h2>
+      <dl class="functions">
+        <div><dt>Read stored facts</dt><dd><code>list_specialties · search_doctors · get_doctor_details<br>get_available_slots · lookup_patient</code></dd></div>
+        <div><dt>Progress through booking</dt><dd><code>begin_booking · confirm_patient_identity<br>prepare_booking · prepare_guest_booking<br>confirm_booking · cancel_pending_booking</code></dd></div>
+        <div><dt>Recover or close the conversation</dt><dd><code>repeat_last_response · speak_safe_reply · end_session</code></dd></div>
+      </dl>
+      <p>The handler returns data to the session controller, which sends function results back to Gemini. Some functions change browser state only; database-backed functions use the API.</p>
+    </div>
+    <div class="card">
+      <p class="eyebrow">Who decides what?</p>
+      <h2>Separate conversation from permission to save</h2>
+      <p><strong>Gemini:</strong> understands doctor/time preferences, reports identity ownership and final approval, and speaks naturally.</p>
+      <p><strong>Browser app:</strong> checks valid progress, fresh caller turns, delivered identity/summary, contact digits and duplicate confirmation.</p>
+      <p><strong>Server + SQLite:</strong> resolve stored aliases, validate records and availability, and commit the appointment in a transaction.</p>
+      <p><strong>Setup:</strong> the browser requests a short-lived Live token from the server; the server obtains it from Google using the configured API key. That setup exchange is omitted from the arrows above.</p>
+    </div>
+  </section>
+  <div class="note">
+    <p><strong>Current limits:</strong> no second verifier model, separate STT/TTS services, prerecorded lines, LiveKit, real telephone network or hospital integration. Semantic decisions and ordinary spoken facts still depend on Gemini's interpretation; the local status check is narrow, not a guarantee against every mistake.</p>
+    <p><strong>Debugging:</strong> browser diagnostics capture transcripts, functions, API timing, booking state and withheld output; the UI provides logs/export for testing. Logging is cross-cutting, so it is described here instead of adding another box.</p>
+  </div>
+  <footer>Implementation snapshot · 2 October 2026 · doc-wide / 1280 × 720 · default light Diagram Design skin<br>Based on geminiLiveConfig.ts, voice/session.ts, agent/tools.ts, bookingService.ts and db/schema.sql. Node groups simplify the source modules; arrows show runtime exchanges, not separate deployment services. Browser state and server drafts are not durable session recovery.</footer>
+</main>
+</body>
+</html>

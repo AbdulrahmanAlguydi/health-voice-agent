@@ -1,6 +1,8 @@
 # Appointment workflow replacement — design
 
-Status: written design for user review. Not implemented. The overall direction and expanded appointment-management scope were accepted in discussion; this document consolidates the refinements and explicitly excludes emergency directions to fictional facilities.
+Status: reviewed design for staged implementation. The replacement workflow is not implemented. The optional simulated calling-number field is implemented separately in the existing prototype. See the companion review for remaining implementation requirements.
+
+Architecture refinement: [BMAD alternatives comparison](../../../_bmad-output/architecture-alternatives/comparison.md) selects resource-centered server drafts/offers/operations rather than a server-driven conversational step machine. Its [target spine](../../../_bmad-output/architecture-alternatives/architecture-alternatives.md) defines acceptance, contact revisions and serialized Stop/emergency boundaries. The capabilities below remain the product contract; no replacement code is implemented by that selection.
 
 ## Goal and constraints
 
@@ -44,17 +46,23 @@ Routing uses synthetic database mappings, not unrestricted medical knowledge. Wh
 
 An emergency phase overrides routine management for an explicit current emergency or clearly described current potentially life-threatening situation. Distinguish current reports from hypotheticals, historical events, quoted text, negation and information questions. One short current-versus-hypothetical clarification is permitted only when unclear, not before responding to clear immediate danger. Do not implement this as a bare keyword match or an emergency questionnaire.
 
-Give a brief response directing the caller to the nearest emergency department/local emergency services, not the fictional clinic address. Do not claim assistance was dispatched, create an ordinary booking or offer a delayed callback as the emergency response. Preserve saved results and stop unfinished routine writes. A correction of misrecognition can restore the prior conversation context. Any emergency number included later must be verified against an authoritative local source. No prerecorded emergency media is needed.
+Give a brief response directing the caller to the nearest hospital emergency department, not the fictional clinic address. Do not claim assistance was dispatched, create an ordinary booking or offer a delayed callback as the emergency response. Preserve saved results and stop unfinished routine writes. A correction of misrecognition can restore the prior conversation context. No emergency-number lookup or prerecorded emergency media is needed for this prototype.
 
 ## Booking and confirmation
 
 Default to booking for the caller. Names may be a single usable name. No mandatory patient-ID or date-of-birth step. No caller number is inherently known in a browser session; only a marked synthetic scenario can supply one.
 
+The web interface includes an optional **Simulated calling number**, initially filled with a fictional test value. Accept Saudi local 05 numbers (ten digits) and equivalent +966 5 forms, including Arabic/Persian digits and formatting separators; normalize locally and reject invalid input before connecting. Blank means unknown, not a guessed default. Freeze the field while connecting or connected; edits apply to the next session. No actual telephony, SMS, ownership verification or authentication is implied.
+
+Pass this as structured session metadata with source `simulated_web_field`, separate from patient speech. In the replacement, the server owns this initial metadata and validates it again. Keep immutable calling-number metadata separate from the editable appointment contact number. Reuse a supplied number without asking for dictation or another phone readback; if the caller chooses another contact number, collect and confirm that instead. Neither number identifies a unique patient or approves any action. Empty input must not inherit the previous session's number.
+
 Offer one actual suitable opening with doctor/date/time. Clear acceptance confirms that offer; collect remaining name/contact details without another appointment readback. A caller-proposed or changed appointment must be checked and offered/accepted before committing. Reject stale offer/action revisions, and never treat agreement with a service or phone number as agreement to another appointment.
+
+Offer the earliest available slot within the caller's requested window, not merely the earliest slot overall. If declined, offer at most two suitable alternatives at a time. If there is no match, ask which preference they would relax or offer a waitlist; never silently change doctor, service or date. After a saved booking, use one short success acknowledgement rather than repeating the complete details or asking whether an already saved appointment is confirmed.
 
 Record offer delivery and acceptance separately. A visible bubble alone is not proof the voice caller heard the offer. An interruption by itself is neither refusal nor consent; clarify genuinely incomplete details without erasing valid intake. The provider's semantic report and subsequent input-turn attribution replace waiting for an independently arriving transcript to match an expected phrase. They do not independently prove the model interpreted consent correctly.
 
-Contact capture accumulates partial phone dictation, supports correction/restart and supported repeated/grouped number forms, preserves zeros, and returns the actual digit count and spoken readback. Confirm a dictated complete number once. Local Saudi 05 numbers require ten digits; other supported international forms have explicit validation rather than silent trimming/padding. Use at most two capture failures before changing approach; persistent failure offers a simulated callback/transfer rather than a loop.
+Contact capture accumulates partial phone dictation, supports correction/restart and supported repeated/grouped number forms, preserves zeros, and returns the actual digit count and spoken readback. Confirm a dictated complete number once. Local Saudi 05 numbers require ten digits; other supported international forms have explicit validation rather than silent trimming/padding. Use at most two capture failures before changing approach; offer the web number field for a new session or a simulated reception handoff rather than a loop. A callback may be saved only if valid contact details are already available; otherwise acknowledge that no callback was created.
 
 Prepare/collect state is not a reservation. Commit only with the relevant accepted offer, complete validated details and a current server action revision. Create patient/profile and appointment atomically. Only report success after the result is known; booking references and internal IDs are not routinely spoken.
 
@@ -79,6 +87,8 @@ Waitlist and callback entries persist preferences/contact without claiming a boo
 Stop queued audio on interruption. Provider tool cancellation does not undo an already committed database action. Cancel reads where practical, serialize writes and reconcile writes whose responses were lost. Configure resumption/GoAway/compression only after testing support with the exact model/token setup; reconstruct authoritative app context without replaying mutations when provider resumption is unavailable.
 
 A failed field or function preserves other valid details and returns a focused repair. Retries are bounded, duplicate safe and observable. A failed greeting/playback never resets domain state. Stop close-after-playback if the caller speaks again; replay audio cannot rerun a write.
+
+Do not turn offer delivery into another transcript-verification gate. Media completion/interruption events help Gemini interpret context but do not require exact phrase matching or whole-turn buffering. A consent function references the particular server-issued offer and revision. Before cancelling, rescheduling or sending a simulated summary link, establish the selected target and action-specific acceptance, not just a generic yes. Ending a session records intent and outcome (completed, declined, unresolved or emergency) without claiming unfinished actions succeeded.
 
 Log session/connection/turn/offer/operation IDs, prompt/config version, server clock, tool arguments/results, before/after snapshots, validation decisions, simulated effects and media lifecycle. Exclude credentials and routine audio base64. Measure tool dispatch/backend/result-to-audio/playback delays separately. The test UI provides transcript/log export and saved activity, not a large admin system.
 

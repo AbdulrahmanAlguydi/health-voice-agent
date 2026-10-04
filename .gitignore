@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+backups/
+# Generated audio, browser snapshots, and the local BMAD runtime.
+output/
+.playwright-cli/
+_bmad/
+# API credentials and local databases.
+.env
+.env.*
+!.env.example
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+# Live-run transcript/diagnostic exports can contain conversation text.
+docs/superpowers/*.json
+docs/superpowers/last-transcript-replay.md

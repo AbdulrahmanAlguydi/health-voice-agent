@@ -1,0 +1,13 @@
+# Natural intake and recovery
+
+Approved scope: replace routine scripted tool speech with intent guidance, keep the clinic opening fixed, acknowledge a selected time before ID intake, speak full Arabic time periods, and recover invalid contact input without losing the appointment context. No second model or relaxed booking-consent rules.
+
+- [x] Reproduce the latest failure: a free mobile-number repair is rejected against cached doctor evidence; interruption clears heard availability. Add failing regressions.
+- [x] Return conversational intent metadata rather than exposing fixed routine dialogue to Gemini. Keep internal fallback text. Track current intake intent for local repair checks; provide structured mobile validation errors and function constraints.
+- [x] Format Arabic Gregorian/Hijri/relative times with full period words. Shorten broad directory speech to three sample names; leave filtered lists and database data intact. This reduces generation/buffering work, not SQL time.
+- [x] Preserve already-heard availability across output interruption, avoid false interruption fallback bubbles, and attempt one bounded contextual spoken repair after a failed output. Do not retry writes or manufacture booking success.
+- [x] Test offline and in actual Arabic/English typed Live conversations, including a three-digit mobile followed by a full number, without committing demo bookings. Update documentation and report remaining limits.
+
+Live regression results: an eight-turn Arabic guest flow and nine-turn English guest flow reached pending full-detail readbacks after correcting `123` to a complete mobile, with audio on every caller turn, then cancelled and closed. No appointment/guest profile was committed; zero second-model verification calls. Earlier runs exposed false rejections for omitted `:00`, twelve-hour clocks, English duration words/month-first dates, and ordinary initial assent; regressions cover these notation/state fixes. A finalized-microphone-consent integration test covers independent ASR timing. This is typed Live testing with simulated playback, not a microphone recognition or accent evaluation. Native generation can still vary in phrasing and latency, and repeated/provider failure remains possible.
+
+Missing qualification information was answered aloud in English (“I don't have that information about Dr. Nada Al-Khatib”) and Arabic («ما عندي هالمعلومة عن الطبيبة»), without inventing an education record. Doctor-name query guidance preserves caller spelling rather than improvising English transliterations. Remaining doctor/specialty lookup limitations include unregistered aliases; this change does not introduce fuzzy doctor guessing.
