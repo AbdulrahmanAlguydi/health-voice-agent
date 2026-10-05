@@ -28,7 +28,7 @@ context: ['{project-root}/AGENTS.md', '{project-root}/README.md']
 
 Using the oneshot route because this is a bounded release-preparation change, not a new booking feature or architecture redesign. Existing booking behavior and local persistent demo data remain untouched.
 
-- Selected Sahlan Voice (سهلان فويس) after a preliminary name-collision screen; no trademark or domain clearance is claimed. Kept the fictional clinic name separate.
+- Initially selected Sahlan Voice (سهلان فويس) after a preliminary name-collision screen; that label was superseded by Rafiq (رفيق) on 2026-10-05. Neither name has trademark or domain clearance. The fictional clinic name remains separate.
 - Added a mode-based diagnostics gate; production builds hide the panel and bypass browser-log load/append/copy/clear, while local development and test builds retain the workflow. A production preview initially showed the panel because Vite `DEV` was true despite production `MODE`; the resolved mode is now authoritative.
 - Added a regression test for hidden/unpersisted diagnostics and documented free-host trade-offs in `docs/hosting-options.md`. No service was deployed.
 - Quick-review triage: fixed one medium-severity documentation finding. The README had described the legacy database/reset command as the active booking store; it now distinguishes `data/reception.sqlite` from the legacy `data/health-voice-agent.sqlite` and warns that the old reset does not clear active reception bookings.

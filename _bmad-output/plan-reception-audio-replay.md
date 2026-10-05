@@ -3,13 +3,13 @@ title: 'Replay synthesized caller speech through Gemini Live'
 type: 'feature'
 ticket: ''
 created: '2026-10-03'
-status: 'in-review'
+status: 'done'
 baseline_revision: 'ceab68c356bcf24146b4a43d58d34ab3b142ae7e'
 route: 'full'
 route_source: 'auto'
 review: 'quick'
 review_source: 'pinned'
-lenses_ran: []
+lenses_ran: ['quick']
 review_loop_iteration: 0
 context: []
 ---
@@ -51,11 +51,11 @@ context: []
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `scripts/receptionAudio.ts` -- parse/validate PCM16 16 kHz mono WAV, wrap generated raw PCM as WAV, and stream 100 ms chunks using one controller microphone turn -- share reliable audio framing between generation and replay.
-- [ ] `scripts/generate-reception-audio.ts` -- create or reuse stable Arabic/English caller utterance fixtures using the configured Gemini API key and a single TTS voice -- no API generation during ordinary offline tests or repeated smoke runs.
-- [ ] `scripts/smoke-reception.ts` and `package.json` -- add explicit audio replay mode; attach caller caption capture; preserve existing typed mode; assert DB booking facts and non-empty agent PCM -- exercise the actual Live audio-input path.
-- [ ] `tests/scripts/receptionAudio.test.ts` -- cover WAV round trip, chunk sizes/final remainder, bad headers/format, and missing fixture handling -- make framing regressions deterministic offline.
-- [ ] `README.md` -- document fixture generation, Arabic/English replay commands, outputs, API usage, and evaluation limits -- make the new testing path usable and honest.
+- [x] `scripts/receptionAudio.ts` -- parse/validate PCM16 16 kHz mono WAV, wrap generated raw PCM as WAV, and stream 100 ms chunks using one controller microphone turn -- share reliable audio framing between generation and replay.
+- [x] `scripts/generate-reception-audio.ts` -- create or reuse stable Arabic/English caller utterance fixtures using the configured Gemini API key and a single TTS voice -- no API generation during ordinary offline tests or repeated smoke runs.
+- [x] `scripts/smoke-reception.ts` and `package.json` -- add explicit audio replay mode; attach caller caption capture; preserve existing typed mode; assert DB booking facts and non-empty agent PCM -- exercise the actual Live audio-input path.
+- [x] `tests/scripts/receptionAudio.test.ts` -- cover WAV round trip, chunk sizes/final remainder, bad headers/format, and missing fixture handling -- make framing regressions deterministic offline.
+- [x] `README.md` -- document fixture generation, Arabic/English replay commands, outputs, API usage, and evaluation limits -- make the new testing path usable and honest.
 
 **Acceptance Criteria:**
 - Given no Gemini credentials, when offline tests run, then WAV parsing/framing tests pass without network calls or demo database changes.
@@ -75,6 +75,8 @@ context: []
 
 ## Review Triage Log
 
+- Quick review of the complete share-ready snapshot (including the audio replay files) found one medium README mismatch about the active versus legacy SQLite database; that documentation was corrected before push. No audio replay finding remained.
+
 ## Design Notes
 
 Fixtures are test callers, not prerecorded agent lines. Generate once and cache to avoid paying for TTS on every replay. Audio input uses the controller's current microphone API (PCM16, 16 kHz, mono); WAV headers are stripped before streaming. Keep TTS prompts clear but natural; do not assert exact ASR spelling where multiple scripts are valid. For booking, derive success and stored fields from `ReceptionService.activity()`/SQLite. A clean offline result validates the harness, while Live replay adds recognition coverage but remains a flaky, provider-backed smoke rather than a deterministic unit test.
@@ -82,10 +84,12 @@ Fixtures are test callers, not prerecorded agent lines. Generate once and cache 
 ## Verification
 
 **Commands:**
-- `npm test` -- all offline tests pass without Google requests.
-- `npm run typecheck` -- TypeScript checks pass.
-- `npm run build` -- typecheck and production build pass.
-- `npx tsx scripts/generate-reception-audio.ts` then Arabic/English `npx tsx scripts/smoke-reception.ts --audio ...` -- TTS fixtures are reused, Live input is audio, report shows DB facts and non-empty agent audio for each reply.
+- `npm test` -- 648 tests passed across 54 files at final completion, including the offline WAV/audio framing tests.
+- `npm run build` -- typecheck and production Vite build passed.
+- Arabic Live audio replay report at `output/reception-live/2026-10-03T13-26-04-965Z-ar-dictated-audio/report.json` -- `failures: 0`, database effects passed, one saved appointment, and nine recorded agent outputs with non-empty PCM.
+- English Live audio replay report at `output/reception-live/2026-10-03T13-31-16-567Z-en-dictated-audio/report.json` -- `failures: 0`, database effects passed, one saved appointment, and nine recorded agent outputs with non-empty PCM. English fixtures for this run used local Windows TTS after Gemini TTS quota was reached.
+
+The report checks prove the test harness exercised Live audio and database effects; they do not certify natural voice quality or real-microphone Saudi-accent recognition.
 
 **Manual checks (if no CLI):**
 - Inspect the generated report and listen to a saved agent response only if needed; confirm user data are synthetic and output/report paths stay under ignored `output/reception-live/`.

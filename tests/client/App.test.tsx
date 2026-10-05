@@ -13,6 +13,21 @@ afterEach(() => {
 });
 
 describe("web voice-agent interface", () => {
+  it("shows the selected Rafiq prototype name in the page heading", () => {
+    const session: SessionControllerApi = {
+      connect: vi.fn(async () => undefined),
+      beginMicrophoneTurn: vi.fn(() => 1),
+      sendMicrophoneAudio: vi.fn(),
+      endMicrophoneStream: vi.fn(),
+      sendText: vi.fn(() => false),
+      stop: vi.fn(async () => undefined),
+    };
+
+    render(<App createSessionController={() => session} />);
+
+    expect(screen.getByRole("heading", { name: /Rafiq.*رفيق/ })).toBeInTheDocument();
+  });
+
   it("validates the optional calling number and locks it only while a session is active", async () => {
     let callbacks: SessionControllerCallbacks | undefined;
     const session: SessionControllerApi = {

@@ -351,7 +351,7 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
         <div className="brand-mark" aria-hidden="true">+</div>
         <div>
           <p className="eyebrow">BILINGUAL CLINIC RECEPTION · ARABIC + ENGLISH</p>
-          <h1>Sahlan Voice <span lang="ar" dir="rtl">سهلان فويس</span></h1>
+          <h1>Rafiq <span lang="ar" dir="rtl">رفيق</span></h1>
         </div>
         <span className={`status-pill status-${sessionState}`} role="status" aria-live="polite">
           <span className="status-dot" />{statusLabels[sessionState]}

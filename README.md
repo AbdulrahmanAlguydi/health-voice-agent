@@ -1,8 +1,10 @@
-# Sahlan Voice (سهلان فويس)
+# Rafiq (رفيق)
 
-**Bilingual clinic reception, in Arabic and English.** Sahlan Voice is a voice-first prototype for natural doctor-directory questions and patient-selected appointment booking, with a text option for easier testing.
+**Bilingual clinic reception, in Arabic and English.** Rafiq is a voice-first prototype for natural doctor-directory questions and patient-selected appointment booking, with a text option for easier testing.
 
 This is a demonstration, not a hospital service: all patient, doctor, and appointment records are fictional; no real clinic is contacted and no real appointment is made. Please do not enter real medical or personal information.
+
+Rafiq is a prototype name, not a clinic brand; it has not been checked for trademark or domain availability.
 
 The app uses Gemini Live for bilingual speech and server-side reception functions backed by the synthetic SQLite directory and appointment store. See [current runtime, verification and rollback](docs/reception-replacement.md) for the active design; older implementation notes are labeled as historical below.
 
