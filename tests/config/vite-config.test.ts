@@ -1,25 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-const originalPort = process.env.PORT;
-
-afterEach(() => {
-  if (originalPort === undefined) delete process.env.PORT;
-  else process.env.PORT = originalPort;
-  vi.resetModules();
-});
-
-describe("Vite development API proxy", () => {
-  it("uses the same configured PORT as the API server", async () => {
-    process.env.PORT = "43127";
-    vi.resetModules();
-
+describe("Vite local development", () => {
+  it("uses the Netlify Vite plugin instead of the separate API proxy", async () => {
     const viteConfig = (await import("../../vite.config")).default;
-    const resolvedConfig = typeof viteConfig === "function"
-      ? await viteConfig({ command: "serve", mode: "development", isSsrBuild: false, isPreview: false })
-      : viteConfig;
-    const apiProxy = resolvedConfig.server?.proxy?.["/api"];
-    const target = typeof apiProxy === "string" ? apiProxy : apiProxy?.target;
-
-    expect(target).toBe("http://localhost:43127");
-  });
+    expect(viteConfig.server?.proxy).toBeUndefined();
+    const pluginNames = ((viteConfig.plugins ?? []) as unknown as unknown[]).flat(Infinity).map((plugin: any) => plugin?.name as string | undefined);
+    expect(pluginNames.some(name => name?.includes("netlify"))).toBe(true);
+  }, 15_000);
 });

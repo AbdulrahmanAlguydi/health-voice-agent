@@ -1,35 +1,43 @@
-# Hosting options for a free demo
+# Netlify deployment
 
-Last checked: 2026-10-04. Free-plan limits change; verify them again before deployment.
+Rafiq is deployed as a Vite site plus a Netlify Function. The active receptionist API and its synthetic bookings use Netlify Database (Postgres); the legacy SQLite demo endpoints remain local fixtures. Gemini Live stays in the browser, while the server issues short-lived tokens using `GEMINI_API_KEY`.
 
-## What the current app needs
+## Netlify build settings
 
-The app is not a static site: the browser talks to a Node/Express API, which owns the SQLite database and issues short-lived Gemini Live credentials. The production build currently creates frontend assets, but the Express app does not yet serve those assets. A public deployment therefore needs either a small production static-serving setup or separate frontend/API services. The API key must remain server-side.
+Use the repository branch `codex/gemini-health-agent` when connecting this checkout. Set the site build values to:
 
-The SQLite database is intentionally persistent in local development. A host with an ephemeral filesystem would lose demo bookings on restart, redeploy, or sleep; this matters if testers should see their bookings persist.
+| Setting | Value |
+| --- | --- |
+| Base directory | repository root (blank) |
+| Build command | `npm run build` |
+| Publish directory | `dist` |
+| Functions directory | `netlify/functions` |
 
-## Shortlist
+`netlify.toml` contains the same build and function settings, plus the `/api/*` rewrite to the Express function. The Vite plugin provides the matching local function and Postgres emulation.
 
-| Option | What is free | Fit and trade-off |
-| --- | --- | --- |
-| **Render Free + Neon Free** | Render gives a `*.onrender.com` address; Neon Free currently includes 1 GB storage and 100 compute-hours per project per month. | Best low-operations public demo after adding a Postgres adapter and production frontend serving. Render sleeps after 15 minutes idle and a waking service can take about a minute; Neon also scales idle compute to zero. SQLite must be migrated because Render's free filesystem is ephemeral. Render's own free Postgres is temporary (30 days), so it is not the persistence choice here. |
-| **Oracle Cloud Always Free VM** | A small VM and boot/block storage within the published Always Free allowance. | Closest fit to the existing Node + `better-sqlite3` design because SQLite can remain on persistent VM storage. More setup and maintenance: Linux updates, process supervision, firewall, TLS, backups, and a public IP. Capacity can vary by home region. |
-| **Cloudflare Workers + D1 + Pages/Worker assets** | Provider subdomains such as `*.workers.dev` / `*.pages.dev`; Workers Free currently includes 100,000 requests per day and D1 has a free allowance. | Durable managed SQL, but the current Express server and native `better-sqlite3` driver cannot be dropped in unchanged. This requires replacing the API/runtime and SQLite access with Worker handlers and D1 bindings, so it is the largest rewrite. |
+The lockfile currently resolves TypeScript to 5.9.3. Keep the compiler on the 5.x line because the Netlify Vite plugin currently fails to initialize with TypeScript 7; recheck the plugin-backed dev server and production build before upgrading the major version.
 
-## Recommendation
+## Database and environment
 
-For a low-maintenance, intermittent demo, use **Render + Neon**, but only after making the small production-serving change and moving the persistence adapter from SQLite to Postgres. Expect a cold start after idle. If preserving the current SQLite implementation is more important than ease of setup, the VM route fits better, but it is not a one-click host.
+For deployment, link the checkout to the Netlify site and create or enable Netlify Database for that site. The database package lets Netlify supply the correct connection to production Functions and local emulation.
 
-For a $0 URL, use the hostname supplied by the host (`onrender.com`, `workers.dev`, or `pages.dev`). Those are provider-owned subdomains, not a custom domain you own. A memorable custom `.com` or similar domain normally requires paid registration; Cloudflare's custom-domain setup assumes you already have a domain.
+To apply the committed schema and fictional clinic seed locally, first start the Netlify Vite environment so its database emulator is available, then apply the migration from another terminal:
 
-Free hosting does not make Gemini Live usage free. Before sharing a public link, check API billing/quotas and limit uncontrolled demo traffic. No hosting account, domain, database, or deployment has been created by this research.
+```sh
+npm install
+npm run dev
+# In a second terminal, while `npm run dev` is still running:
+npm run database:migrate
+```
 
-## Sources
+Set `GEMINI_API_KEY` as a server-side environment variable in Netlify, then redeploy. It is the only application secret required for voice. Do not add it to a `VITE_` variable or expose it to browser code. Netlify Database supplies `NETLIFY_DB_URL`; do not copy a production connection string into the repository or `.env` file.
 
-- [Render free services and limits](https://render.com/docs/free)
-- [Render web services and `onrender.com` hostnames](https://render.com/docs/web-services)
-- [Neon Free plan allowance](https://neon.com/blog/neon-free-plan-1-gb-per-project) and [five-minute scale-to-zero behavior](https://neon.com/docs/manage/endpoints/)
-- [Oracle Always Free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
-- [Cloudflare Workers pricing and quotas](https://developers.cloudflare.com/workers/platform/pricing/)
-- [Cloudflare D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
-- [Cloudflare `workers.dev` hostname](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/) and [Pages custom-domain requirements](https://developers.cloudflare.com/pages/configuration/custom-domains/)
+For local work, copy `.env.example` to `.env` and add a development `GEMINI_API_KEY` if voice is needed. The Netlify Vite plugin serves the Vite app and `/api/*` function routes against its local Postgres emulator. The CLI alternative is `npm run netlify:dev`; the same local database and migrations are shared between both modes.
+
+The simultaneous final-slot contention acceptance test uses `TEST_POSTGRES_URL` and requires a disposable real PostgreSQL database; it creates and drops its own isolated schema. Run it with `npm run test:postgres` after setting that variable. The local PGlite emulator's `pg-gateway` has cross-talk across overlapping savepoint transactions on different clients; we reproduced the lost rows with direct SQL outside the application, so the PGlite suite cannot verify this production concurrency case. Never point `TEST_POSTGRES_URL` at a production database.
+
+## Deploy checks
+
+Before sharing the site, confirm `/api/health` and the receptionist session routes work, and complete a demo booking. A booking is only confirmed when the API returns `committed`; after restarting local dev, use a fresh session to confirm the committed time is no longer available. The cross-session activity diagnostic is limited to the standalone local development server and is not exposed by the public function. Production database migrations run as part of Netlify's deploy lifecycle. Create the site's Netlify Database before the first production deployment so the initial migration has a database target.
+
+The app contains synthetic clinic, doctor, and booking data only. Do not import the legacy SQLite appointments or patient records. The API key and database connection string are secrets; never print or commit them. Public demo traffic can incur Gemini and database usage, so review the account's quotas before sharing broadly.

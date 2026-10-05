@@ -5,7 +5,7 @@ import type { ReceptionSnapshot } from "../../shared/reception";
 const WINDOW_MS = 60_000;
 const MAX_TOKENS_PER_WINDOW = 8;
 
-export function createGeminiRouter(issueToken?: GeminiTokenIssuer, getSnapshot?: (id: string) => ReceptionSnapshot | undefined) {
+export function createGeminiRouter(issueToken?: GeminiTokenIssuer, getSnapshot?: (id: string) => Promise<ReceptionSnapshot | undefined> | ReceptionSnapshot | undefined) {
   const router = Router();
   const requests = new Map<string, { count: number; resetAt: number }>();
 
@@ -19,7 +19,7 @@ export function createGeminiRouter(issueToken?: GeminiTokenIssuer, getSnapshot?:
     let snapshot: ReceptionSnapshot | undefined;
     if (getSnapshot) {
       if (typeof request.body?.sessionId !== "string") { response.status(400).json({ error: "Reception session is required." }); return; }
-      snapshot = getSnapshot(request.body.sessionId);
+      snapshot = await getSnapshot(request.body.sessionId);
       if (!snapshot) { response.status(404).json({ error: "Reception session was not found." }); return; }
       if (snapshot.status === "closed") { response.status(409).json({ error: "Reception session is closed." }); return; }
     }

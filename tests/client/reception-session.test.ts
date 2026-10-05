@@ -1,8 +1,8 @@
 import type { LiveCallbacks, LiveServerMessage } from "@google/genai";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReceptionSessionController } from "../../src/client/voice/receptionSession";
 import type { ReceptionCommand, ReceptionSnapshot } from "../../src/shared/reception";
-import { openReceptionDatabase } from "../../src/server/reception/database";
+import { createReceptionTestDatabase } from "../helpers/receptionDatabase";
 import { ReceptionService } from "../../src/server/reception/service";
 import { createApp } from "../../src/server/app";
 import request from "supertest";
@@ -31,6 +31,13 @@ async function harness(options: Record<string, unknown> = {}) {
   return { controller, commands, requests, fetch, port, emit: (message: unknown) => callbacks?.onmessage(message as LiveServerMessage), closeProvider: () => callbacks?.onclose?.({} as any) };
 }
 const tool = (name: string, id = name, args: Record<string, unknown> = {}) => ({ toolCall: { functionCalls: [{ name, id, args }] } });
+const receptionFixtures: Array<{ dispose: () => Promise<void> }> = [];
+afterEach(async () => { await Promise.all(receptionFixtures.splice(0).map(fixture => fixture.dispose())); });
+async function createReceptionFixture() {
+  const fixture = await createReceptionTestDatabase();
+  receptionFixtures.push(fixture);
+  return fixture;
+}
 
 it("does not let an older delayed tool snapshot reopen a fenced session", async () => {
   let release: (response: Response) => void = () => undefined;
@@ -228,7 +235,7 @@ describe("thin reception transport", () => {
     expect(h.commands.some(c=>c.tool==='set_emergency'&&c.args.active)).toBe(true);
   });
   it('binds recovered real offers to exposure and commits exactly one real appointment',async()=>{
-    const db=openReceptionDatabase(':memory:');const service=new ReceptionService(db,{clock:()=>new Date('2026-10-03T05:00:00Z')});
+    const fixture=await createReceptionFixture();const db=fixture.pool;const service=new ReceptionService(db,{clock:()=>new Date('2026-10-03T05:00:00Z')});
     const app=createApp({receptionService:service,geminiTokenIssuer:async()=>({token:'token',voiceName:'Kore',expiresAt:new Date(Date.now()+60000).toISOString()})});
     let callbacks:LiveCallbacks|undefined;let started:()=>void=()=>undefined;let lost=0;
     const port={sendRealtimeInput:vi.fn(),sendClientContent:vi.fn(),sendToolResponse:vi.fn(),close:vi.fn()};
@@ -250,12 +257,12 @@ describe("thin reception transport", () => {
       expect(approved.status).toBe('ready');
       callbacks!.onmessage(tool('commit_request','commit',{operationId:approved.operationId}) as LiveServerMessage);
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(3));
-      expect(service.activity().appointments).toHaveLength(1);
+      expect((await service.activity()).appointments).toHaveLength(1);
       expect((port.sendToolResponse.mock.calls[2][0] as any).functionResponses[0].response.status).toBe('committed');
-    }finally{await c.stop(false);db.close();}
+    }finally{await c.stop(false);}
   });
   it('recovers a refreshed offer after the name turn and commits only after a fresh caller decision',async()=>{
-    const db=openReceptionDatabase(':memory:');const service=new ReceptionService(db,{clock:()=>new Date('2026-10-03T05:00:00Z')});
+    const fixture=await createReceptionFixture();const db=fixture.pool;const service=new ReceptionService(db,{clock:()=>new Date('2026-10-03T05:00:00Z')});
     const app=createApp({receptionService:service,geminiTokenIssuer:async()=>({token:'token',voiceName:'Kore',expiresAt:new Date(Date.now()+60000).toISOString()})});
     let callbacks:LiveCallbacks|undefined;const diagnostics:any[]=[];
     const port={sendRealtimeInput:vi.fn(),sendClientContent:vi.fn(),sendToolResponse:vi.fn(),close:vi.fn()};
@@ -266,7 +273,7 @@ describe("thin reception transport", () => {
     };
     const c=new ReceptionSessionController({fetch:transport,connectLive:async(_t,_m,_cfg,cb)=>{callbacks=cb;return port;},onDiagnostic:(event:any)=>diagnostics.push(event)});
     const response=(call:number,index=0)=>(port.sendToolResponse.mock.calls[call][0] as any).functionResponses[index].response;
-    const count=(table:string)=>Number((db.prepare(`SELECT COUNT(*) n FROM ${table}`).get() as {n:number}).n);
+    const count=async(table:string)=>Number((await db.query(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
     const assistant=(text:string)=>callbacks!.onmessage({serverContent:{outputTranscription:{text,finished:true},turnComplete:true}} as LiveServerMessage);
     try{
       await c.connect({simulatedCallingNumber:'0501234567'});
@@ -284,7 +291,7 @@ describe("thin reception transport", () => {
       callbacks!.onmessage(tool('accept_offer','same-turn-fresh',{offerId:freshOffer.offerId,decision:'accept',detailsCommunicated:true}) as LiveServerMessage);
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(4));
       expect(response(3).status).toBe('needs_clarification');
-      expect(count('reception_appointments')).toBe(0);expect(count('reception_effects')).toBe(0);
+      expect(await count('reception_appointments')).toBe(0);expect(await count('reception_effects')).toBe(0);
       assistant('هذا الموعد المتاح يوم الأحد الساعة تسعة صباحًا. هل يناسبك؟');
 
       c.sendText('لا، تستاهل، لا ما فيش مشكلة');
@@ -296,7 +303,7 @@ describe("thin reception transport", () => {
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(5));
       expect(response(4,1)).toMatchObject({status:'needs_clarification',issues:['offer_requires_presented_details_and_subsequent_known_turn']});
       expect(response(4,1).facts).toMatchObject({offerAccepted:false,bookingStatus:'not_booked',appointmentSaved:false,slotReserved:false});
-      expect(count('reception_appointments')).toBe(0);expect(count('reception_effects')).toBe(0);
+      expect(await count('reception_appointments')).toBe(0);expect(await count('reception_effects')).toBe(0);
 
       const clarificationText='الموعد مع د. ندى الخطيب يوم الأحد ٤ أكتوبر، الساعة ٩ الصباح، يناسبك؟';
       assistant(clarificationText);
@@ -307,17 +314,17 @@ describe("thin reception transport", () => {
       c.sendText('ايه، احجزه');callbacks!.onmessage(tool('accept_offer','clear-yes',{offerId:freshOffer.offerId,decision:'accept',detailsCommunicated:true}) as LiveServerMessage);
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(6));
       const ready=response(5);expect(ready.status).toBe('ready');
-      expect(count('reception_appointments')).toBe(0);expect(count('reception_effects')).toBe(0);
+      expect(await count('reception_appointments')).toBe(0);expect(await count('reception_effects')).toBe(0);
       callbacks!.onmessage(tool('commit_request','commit',{operationId:ready.operationId}) as LiveServerMessage);
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(7));
       expect(response(6).status).toBe('committed');
-      expect(service.activity().appointments).toHaveLength(1);
-      expect(db.prepare('SELECT doctor_id, starts_at_utc FROM reception_appointments').get()).toEqual({doctor_id:'doc-028',starts_at_utc:'2026-10-04T06:00:00.000Z'});
-      expect(count('reception_appointments')).toBe(1);expect(count('reception_effects')).toBe(1);
-    }finally{await c.stop(false);db.close();}
+      expect((await service.activity()).appointments).toHaveLength(1);
+      expect((await db.query('SELECT doctor_id, starts_at_utc FROM reception_appointments')).rows[0]).toEqual({doctor_id:'doc-028',starts_at_utc:'2026-10-04T06:00:00.000Z'});
+      expect(await count('reception_appointments')).toBe(1);expect(await count('reception_effects')).toBe(1);
+    }finally{await c.stop(false);}
   });
   it('forwards accepted-but-unbooked contact repair facts and writes only after commit',async()=>{
-    const db=openReceptionDatabase(':memory:');const service=new ReceptionService(db,{clock:()=>new Date('2026-10-03T05:00:00Z')});
+    const fixture=await createReceptionFixture();const db=fixture.pool;const service=new ReceptionService(db,{clock:()=>new Date('2026-10-03T05:00:00Z')});
     const app=createApp({receptionService:service,geminiTokenIssuer:async()=>({token:'token',voiceName:'Kore',expiresAt:new Date(Date.now()+60000).toISOString()})});
     let callbacks:LiveCallbacks|undefined;let started:()=>void=()=>undefined;
     const port={sendRealtimeInput:vi.fn(),sendClientContent:vi.fn(),sendToolResponse:vi.fn(),close:vi.fn()};
@@ -328,9 +335,9 @@ describe("thin reception transport", () => {
     };
     const c=new ReceptionSessionController({fetch:transport,connectLive:async(_t,_m,_cfg,cb)=>{callbacks=cb;return port;},onStreamStart:(_id,start)=>{started=start;}});
     const response=(call:number,index=0)=>(port.sendToolResponse.mock.calls[call][0] as any).functionResponses[index].response;
-    const appointmentCount=()=>Number((db.prepare('SELECT COUNT(*) n FROM reception_appointments').get() as {n:number}).n);
-    const effectCount=()=>Number((db.prepare('SELECT COUNT(*) n FROM reception_effects').get() as {n:number}).n);
-    const occupancyCount=()=>Number((db.prepare('SELECT COUNT(*) n FROM reception_occupancy').get() as {n:number}).n);
+    const appointmentCount=async()=>Number((await db.query('SELECT COUNT(*) AS n FROM reception_appointments')).rows[0].n);
+    const effectCount=async()=>Number((await db.query('SELECT COUNT(*) AS n FROM reception_effects')).rows[0].n);
+    const occupancyCount=async()=>Number((await db.query('SELECT COUNT(*) AS n FROM reception_occupancy')).rows[0].n);
     try{
       await c.connect();
       c.sendText('My name is Ahmed and my phone number is one three three.');
@@ -353,7 +360,7 @@ describe("thin reception transport", () => {
       expect(incomplete).toMatchObject({status:'invalid_contact',facts:{offerAccepted:true,bookingStatus:'not_booked',appointmentSaved:false,slotReserved:false,capacityHeld:false,requiredFunction:'capture_contact'}});
       expect(incomplete.operationId).toBeUndefined();expect(incomplete.snapshot.draft.acceptedOfferId).toBe(offer.offerId);
       expect(incomplete.snapshot.contact.rawChunks).toBeUndefined();
-      expect(appointmentCount()).toBe(0);expect(effectCount()).toBe(0);expect(occupancyCount()).toBe(0);
+      expect(await appointmentCount()).toBe(0);expect(await effectCount()).toBe(0);expect(await occupancyCount()).toBe(0);
       callbacks!.onmessage({serverContent:{turnComplete:true}} as LiveServerMessage);
 
       c.sendText('The full number is zero five zero one two three four five six seven');
@@ -361,21 +368,21 @@ describe("thin reception transport", () => {
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(4));
       const captured=response(3);
       expect(captured).toMatchObject({status:'needs_details',facts:{offerAccepted:true,bookingStatus:'not_booked',appointmentSaved:false,slotReserved:false,capacityHeld:false,requiredFunction:'confirm_contact'}});
-      expect(appointmentCount()).toBe(0);expect(effectCount()).toBe(0);expect(occupancyCount()).toBe(0);
+      expect(await appointmentCount()).toBe(0);expect(await effectCount()).toBe(0);expect(await occupancyCount()).toBe(0);
       callbacks!.onmessage({serverContent:{turnComplete:true}} as LiveServerMessage);
       c.sendText('Yes, that number is correct');callbacks!.onmessage(tool('confirm_contact','confirm',{contactVersion:captured.snapshot.contact.version,decision:'accept'}) as LiveServerMessage);
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(5));
       const ready=response(4);
       expect(ready).toMatchObject({status:'ready',facts:{offerAccepted:true,bookingStatus:'not_booked',appointmentSaved:false,slotReserved:false,capacityHeld:false,requiredFunction:'commit_request'}});
       expect(ready.operationId).toBeTruthy();expect(ready.snapshot.draft.acceptedOfferId).toBe(offer.offerId);
-      expect(appointmentCount()).toBe(0);expect(effectCount()).toBe(0);expect(occupancyCount()).toBe(0);
+      expect(await appointmentCount()).toBe(0);expect(await effectCount()).toBe(0);expect(await occupancyCount()).toBe(0);
       callbacks!.onmessage({serverContent:{turnComplete:true}} as LiveServerMessage);
 
       c.sendText('Save the appointment');callbacks!.onmessage(tool('commit_request','commit',{operationId:ready.operationId}) as LiveServerMessage);
       await vi.waitFor(()=>expect(port.sendToolResponse).toHaveBeenCalledTimes(6));
       expect(response(5).status).toBe('committed');
-      expect(appointmentCount()).toBe(1);expect(effectCount()).toBe(1);expect(occupancyCount()).toBe(2);
-    }finally{await c.stop(false);db.close();}
+      expect(await appointmentCount()).toBe(1);expect(await effectCount()).toBe(1);expect(await occupancyCount()).toBe(2);
+    }finally{await c.stop(false);}
   });
   it('returns current request facts to Gemini without repeating historical results and the whole directory',async()=>{
     const h=await harness();

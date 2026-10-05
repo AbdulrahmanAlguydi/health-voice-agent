@@ -16,3 +16,6 @@ data/*.sqlite-wal
 # Live-run transcript/diagnostic exports can contain conversation text.
 docs/superpowers/*.json
 docs/superpowers/last-transcript-replay.md
+
+# Local Netlify folder
+.netlify

@@ -222,7 +222,7 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
       },
       onApprovedOutput: (output: ApprovedOutput, complete, failed) => {
         appendLog("audio", output.verification === "not_required"
-          ? "Audio ready: native voice; booking-status check only."
+          ? "Audio ready: native Live output; no transcript verifier."
             : output.verification === "local"
               ? "Audio ready: local factual checks passed; no second model."
               : "Audio check passed.");

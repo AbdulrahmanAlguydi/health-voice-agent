@@ -1,4 +1,6 @@
-# Resource receptionist runtime
+# Historical reception workflow replacement
+
+This document records the earlier local SQLite implementation, its verification and rollback archive. It is not the active runtime architecture. The active reception API now runs through Netlify Functions and persists state in Netlify Database (Postgres); see [the Netlify deployment guide](hosting-options.md) and [the current prototype design](health-voice-agent-design.md).
 
 The default web app uses `ReceptionSessionController`, native streaming Gemini Live audio and the `/api/reception` resource API. The server owns session contact, drafts, actual offers, acceptance and durable operation results. The browser carries input/output identifiers, media exposure and HTTP calls; it does not run the old patient-intake or delivery gates.
 

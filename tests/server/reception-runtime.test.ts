@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createGeminiTokenIssuer } from "../../src/server/services/geminiTokenService";
 import request from "supertest";
 import { createApp } from "../../src/server/app";
-import { openReceptionDatabase } from "../../src/server/reception/database";
+import { createReceptionTestDatabase } from "../helpers/receptionDatabase";
 import { ReceptionService } from "../../src/server/reception/service";
 
 describe("replacement runtime token constraints", () => {
@@ -21,12 +21,12 @@ describe("replacement runtime token constraints", () => {
 });
 
 it("locks Live token context to the selected persisted reception session", async () => {
-  const db = openReceptionDatabase(":memory:");
+  const fixture = await createReceptionTestDatabase();
   try {
     const clock=()=>new Date("2026-10-03T22:30:00Z");
-    const service=new ReceptionService(db,{clock});
-    const session=service.createSession("0501234567");
-    service.execute(session.sessionId,{eventId:"name",expectedVersion:0,tool:"set_booking_details",args:{patientName:"Saved Synthetic Caller"},context:{connectionId:"c",inputTurnId:"i",inputSequence:1,eventSequence:1,inputStartedEventSequence:1,source:"text",attribution:"known"}});
+    const service=new ReceptionService(fixture.pool,{clock});
+    const session=await service.createSession("0501234567");
+    await service.execute(session.sessionId,{eventId:"name",expectedVersion:0,tool:"set_booking_details",args:{patientName:"Saved Synthetic Caller"},context:{connectionId:"c",inputTurnId:"i",inputSequence:1,eventSequence:1,inputStartedEventSequence:1,source:"text",attribution:"known"}});
     const create=vi.fn().mockResolvedValue({name:"synthetic-token"});
     const app=createApp({receptionService:service,geminiTokenIssuer:createGeminiTokenIssuer({create},clock)});
     const result=await request(app).post("/api/gemini/live-token").send({sessionId:session.sessionId});
@@ -39,5 +39,5 @@ it("locks Live token context to the selected persisted reception session", async
     expect(instruction).toContain("Asia/Riyadh");
     expect(instruction).toContain("doc-030");
     expect((await request(app).post("/api/gemini/live-token").send({sessionId:"missing"})).status).toBe(404);
-  } finally {db.close();}
+  } finally {await fixture.dispose();}
 });
