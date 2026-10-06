@@ -9,6 +9,7 @@ import request from "supertest";
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 const snapshot = (): ReceptionSnapshot => ({ sessionId: "s", version: 0, status: "active", clock: { nowIso: "2026-10-03T10:00:00Z", timeZone: "Asia/Riyadh", localDate: "2026-10-03" }, directory: [], clinic: {}, contact: { rawChunks: [], digits: "", version: 0, source: "dictated" }, offers: [], operations: [] });
+const harnessControllers: ReceptionSessionController[] = [];
 async function harness(options: Record<string, unknown> = {}) {
   let callbacks: LiveCallbacks | undefined;
   let state = snapshot();
@@ -28,11 +29,161 @@ async function harness(options: Record<string, unknown> = {}) {
   });
   const controller = new ReceptionSessionController({ fetch, connectLive: async (_token, _model, _config, cb) => { callbacks = cb; return port; }, ...options });
   await controller.connect();
+  harnessControllers.push(controller);
   return { controller, commands, requests, fetch, port, emit: (message: unknown) => callbacks?.onmessage(message as LiveServerMessage), closeProvider: () => callbacks?.onclose?.({} as any) };
 }
 const tool = (name: string, id = name, args: Record<string, unknown> = {}) => ({ toolCall: { functionCalls: [{ name, id, args }] } });
 const receptionFixtures: Array<{ dispose: () => Promise<void> }> = [];
-afterEach(async () => { await Promise.all(receptionFixtures.splice(0).map(fixture => fixture.dispose())); });
+afterEach(async () => {
+  await Promise.all(harnessControllers.splice(0).map(controller => controller.stop(false)));
+  await Promise.all(receptionFixtures.splice(0).map(fixture => fixture.dispose()));
+  vi.useRealTimers();
+});
+
+it("pings on the two-minute cadence, stops after four idle minutes, and wakes on a later caller turn", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const h = await harness();
+  const pings = () => h.requests.filter(request => request.url.endsWith("/keep-warm")).length;
+
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(1);
+  expect(h.controller.sendText("I am still here")).toBe(true);
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(2);
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(2);
+
+  expect(h.controller.sendText("I am back")).toBe(true);
+  expect(pings()).toBe(3);
+  await h.controller.stop(false);
+  await vi.advanceTimersByTimeAsync(6 * 60_000);
+  expect(pings()).toBe(3);
+});
+
+it("finishes session database work and arms keep-warm before opening Gemini Live", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const requests: string[] = [];
+  const port = { sendRealtimeInput: vi.fn(), sendClientContent: vi.fn(), sendToolResponse: vi.fn(), close: vi.fn() };
+  const fetch = vi.fn(async (url: any, init?: RequestInit) => {
+    requests.push(`${init?.method ?? "GET"} ${String(url)}`);
+    if (url === "/api/gemini/live-token") return json({ token: "token", model: "gemini-3.8-live", voiceName: "Kore", expiresAt: new Date(Date.now() + 60000).toISOString() });
+    if (String(url).endsWith("/keep-warm")) return json({ status: "ok" });
+    return json(snapshot());
+  });
+  const connectLive = vi.fn(async (_token: string, _model: string, _config: unknown, _callbacks: LiveCallbacks) => {
+    expect(requests.slice(0, 2)).toEqual(["POST /api/reception/sessions", "POST /api/gemini/live-token"]);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(requests).toContain("GET /api/reception/sessions/s/keep-warm");
+    return port;
+  });
+  const controller = new ReceptionSessionController({ fetch, connectLive });
+  harnessControllers.push(controller);
+  await controller.connect();
+  expect(connectLive).toHaveBeenCalledOnce();
+  await controller.stop(false);
+});
+
+it("measures microphone activity by turns instead of refreshing for silence audio chunks", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const h = await harness();
+  const pings = () => h.requests.filter(request => request.url.endsWith("/keep-warm")).length;
+
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(1);
+  h.controller.beginMicrophoneTurn();
+  h.controller.sendMicrophoneAudio("AAAA");
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(2);
+
+  h.controller.sendMicrophoneAudio("BBBB");
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(2);
+});
+
+it("allows one in-flight ping and swallows its failure without blocking caller input", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const transcript: unknown[][] = [], errors: string[] = [];
+  const h = await harness({ onPatientTranscript: (...args: unknown[]) => transcript.push(args), onError: (message: string) => errors.push(message) });
+  const original = h.fetch.getMockImplementation()!;
+  let rejectPing: (error: Error) => void = () => undefined;
+  const pending = new Promise<Response>((_resolve, reject) => { rejectPing = reject; });
+  h.fetch.mockImplementation(async (url: any, init?: RequestInit) => {
+    if (String(url).endsWith("/keep-warm")) {
+      h.requests.push({ url: String(url), body: undefined });
+      return pending;
+    }
+    return original(url, init);
+  });
+  const pings = () => h.requests.filter(request => request.url.endsWith("/keep-warm")).length;
+
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(1);
+  expect(h.controller.sendText("conversation remains responsive")).toBe(true);
+  expect(transcript.at(-1)?.[0]).toBe("conversation remains responsive");
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(1);
+
+  rejectPing(new Error("database unavailable"));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(errors).toEqual([]);
+  expect(h.controller.sendText("continue speaking")).toBe(true);
+  expect(transcript.at(-1)?.[0]).toBe("continue speaking");
+});
+
+it("stops the heartbeat during reconnect and after a terminal disconnect", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const h = await harness();
+  const pings = () => h.requests.filter(request => request.url.endsWith("/keep-warm")).length;
+
+  h.closeProvider();
+  await vi.waitFor(() => expect(h.requests.filter(request => request.url.endsWith("live-token"))).toHaveLength(2));
+  expect(pings()).toBe(1);
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(pings()).toBe(2);
+
+  h.closeProvider();
+  await vi.advanceTimersByTimeAsync(6 * 60_000);
+  expect(pings()).toBe(2);
+});
+
+it("does not resume keep-warm after reconnect when caller activity is older than four minutes", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const h = await harness();
+  await h.controller.stop(false);
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+  await h.controller.connect();
+  await vi.advanceTimersByTimeAsync(6 * 60_000);
+  expect(h.requests.filter(request => request.url.endsWith("/keep-warm"))).toHaveLength(0);
+});
+
+it("starts a fresh keep-warm window when a closed session creates a new session", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-06T00:00:00.000Z"));
+  const h = await harness();
+  await h.controller.stop();
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+  const original = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation(async (url: any, init?: RequestInit) => {
+    if (url === "/api/reception/sessions") {
+      h.requests.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return json({ ...snapshot(), sessionId: "fresh-session" });
+    }
+    return original(url, init);
+  });
+  await h.controller.connect();
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+
+  expect(h.requests.filter(request => request.url.endsWith("/keep-warm"))).toHaveLength(1);
+});
 
 it("pins the selected voice across automatic and manual reconnects, then permits a new session voice", async () => {
   let callbacks: LiveCallbacks | undefined;

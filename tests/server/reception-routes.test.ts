@@ -66,6 +66,24 @@ it("builds one snapshot for GET and uses one existence query for guarded validat
   }
 });
 
+it("keeps an existing session warm with one read-only existence query and rejects unknown sessions", async () => {
+  const queries: string[] = [];
+  const f = await app(sql => { queries.push(sql); });
+  const snapshot = await f.service.createSession();
+  queries.length = 0;
+
+  const active = await request(f.server).get(`/api/reception/sessions/${snapshot.sessionId}/keep-warm`);
+  expect(active.status).toBe(200);
+  expect(active.body).toEqual({ status: "ok" });
+  expect(queries).toEqual(["SELECT 1 FROM reception_sessions WHERE id=$1"]);
+
+  queries.length = 0;
+  const missing = await request(f.server).get("/api/reception/sessions/missing/keep-warm");
+  expect(missing.status).toBe(404);
+  expect(missing.body).toEqual({ error: "session_not_found" });
+  expect(queries).toEqual(["SELECT 1 FROM reception_sessions WHERE id=$1"]);
+});
+
 it("logs only normalized route timing fields for successful, invalid, missing and unmatched requests", async () => {
   const f = await app();
   const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -73,12 +91,14 @@ it("logs only normalized route timing fields for successful, invalid, missing an
   const base = `/api/reception/sessions/${created.body.sessionId}`;
   await request(f.server).post(`${base}/tools?name=private-name`).send({ transcript: "private-transcript" });
   await request(f.server).get("/api/reception/sessions/private-session/events/private-event");
+  await request(f.server).get(`${base}/keep-warm?caller=private-number`);
   await request(f.server).get("/api/reception/private-path?number=0501234567");
-  expect(log.mock.calls).toHaveLength(4);
+  expect(log.mock.calls).toHaveLength(5);
   const expected = [
     { method: "POST", route: "/api/reception/sessions", status: 201 },
     { method: "POST", route: "/api/reception/sessions/:id/tools", status: 400 },
     { method: "GET", route: "/api/reception/sessions/:id/events/:eventId", status: 404 },
+    { method: "GET", route: "/api/reception/sessions/:id/keep-warm", status: 200 },
     { method: "GET", route: "/api/reception/unmatched", status: 404 },
   ];
   log.mock.calls.forEach((args, index) => {

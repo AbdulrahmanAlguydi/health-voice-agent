@@ -12,6 +12,7 @@ function normalizedRoute(path: string): string {
     [/^\/sessions\/?$/i, "/sessions"],
     [/^\/activity\/?$/i, "/activity"],
     [/^\/sessions\/[^/]+\/?$/i, "/sessions/:id"],
+    [/^\/sessions\/[^/]+\/keep-warm\/?$/i, "/sessions/:id/keep-warm"],
     [/^\/sessions\/[^/]+\/tools\/?$/i, "/sessions/:id/tools"],
     [/^\/sessions\/[^/]+\/events\/?$/i, "/sessions/:id/events"],
     [/^\/sessions\/[^/]+\/events\/[^/]+\/?$/i, "/sessions/:id/events/:eventId"],
@@ -50,6 +51,7 @@ export function createReceptionRouter(service:ReceptionService, options:{exposeA
     res.json(snapshot);
   }));
   router.use("/sessions/:id",asyncRoute(async(req,res,next)=>{if(!await service.hasSession(String(req.params.id))){res.status(404).json({error:"session_not_found"});return;}next();}));
+  router.get("/sessions/:id/keep-warm",asyncRoute(async(_req,res)=>{res.json({status:"ok"});}));
   router.post("/sessions/:id/tools",asyncRoute(async(req,res)=>{const parsed=receptionCommandSchema.safeParse(req.body);if(!parsed.success||!tools.has(parsed.data.tool)){res.status(400).json({error:"invalid_command"});return;}res.json(await service.execute(String(req.params.id),parsed.data));}));
   router.post("/sessions/:id/events",asyncRoute(async(req,res)=>{const parsed=receptionMediaEventSchema.safeParse(req.body);if(!parsed.success){res.status(400).json({error:"invalid_media_event"});return;}res.json(await service.recordMediaEvent(String(req.params.id),parsed.data));}));
   router.get("/sessions/:id/events/:eventId",asyncRoute(async(req,res)=>{res.json(await service.getEvent(String(req.params.id),String(req.params.eventId)));}));

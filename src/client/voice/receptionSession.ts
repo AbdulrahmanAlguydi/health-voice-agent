@@ -12,6 +12,8 @@ export type ReceptionSessionOptions = SessionControllerCallbacks & { fetch?: typ
 type Input = { id: string; sequence: number; started: number; source: "text" | "microphone"; attribution: "known" | "uncertain"; transcript: string; finalized: boolean; completed?: boolean };
 type Output = { id: string; input: Input; responseActivity: number; text: string; audio: RecordedOutput["audio"]; offers: string[]; exposure: ReceptionMediaEvent["exposure"]; ended: boolean; stream: boolean; audioStarted: boolean; transcriptEmitted: boolean; publishedText?: string };
 const reads = new Set(["clinic_information", "get_operation"]);
+const keepWarmIntervalMs = 2 * 60_000;
+const keepWarmIdleLimitMs = 4 * 60_000;
 const object = (value: unknown): Record<string, any> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
 const id = () => globalThis.crypto.randomUUID();
 function modelResult(result: Record<string, unknown>): Record<string, unknown> {
@@ -46,6 +48,10 @@ export class ReceptionSessionController implements SessionControllerApi {
   private closing?: { inputId: string; args: Pick<ReceptionClose, "intent" | "outcome">; outputId?: string };
   private reconnectAttempted = false;
   private stopping = false;
+  private keepWarmTimer?: ReturnType<typeof setInterval>;
+  private lastCallerActivityAt?: number;
+  private lastKeepWarmAt?: number;
+  private keepWarmInFlight?: Promise<void>;
   private language: "ar" | "en" = "ar";
   private voiceName?: GeminiVoiceName;
 
@@ -68,7 +74,9 @@ export class ReceptionSessionController implements SessionControllerApi {
         this.unknown = undefined; this.media = []; this.pendingOffers = []; this.output = undefined; this.lastOutput = undefined; this.responseInput = undefined; this.microphoneCaptions = []; this.orphanCaption = undefined; this.microphoneStreamActive = false; this.closing = undefined; this.toolQueue = Promise.resolve(); this.inputSequence = 0; this.eventSequence = 0; this.language = 'ar';
         this.input = { id:id(), sequence:0, started:0, source:'text', attribution:'uncertain', transcript:'', finalized:true };
         this.snapshot = receptionSnapshotSchema.parse(await this.request('/api/reception/sessions', { callingNumber }));
+        this.lastCallerActivityAt = Date.now();
       }
+      this.resumeKeepWarm(false);
       await this.openProvider();
     } catch (error) { this.fail(error); }
   }
@@ -84,7 +92,7 @@ export class ReceptionSessionController implements SessionControllerApi {
     };
     const live = await this.liveConnect(token.token, token.model, createReceptionLiveConfig(this.voiceName, this.snapshot), callbacks);
     if (generation !== this.generation || this.stopping) { live.close(); return; }
-    this.live = live; this.state("connected");
+    this.live = live; this.resumeKeepWarm(true); this.state("connected");
     this.diagnostic("reception_connected", { connectionId: this.connectionId, snapshotVersion: this.snapshot!.version });
     live.sendClientContent({ turns: [{ role: "user", parts: [{ text: this.inputSequence ? "Continue this reception conversation from the authoritative server context. Do not replay any write or greet as a new caller." : "ابدئي بتحية استقبال طبيعية ومختصرة، ثم اسألي كيف تساعدين المتصل." }] }], turnComplete: true });
   }
@@ -108,6 +116,10 @@ export class ReceptionSessionController implements SessionControllerApi {
   }
   endMicrophoneStream(): void { this.microphoneStreamActive = false; this.live?.sendRealtimeInput({ audioStreamEnd: true }); }
   private newInput(source: Input["source"], attribution: Input["attribution"]): void {
+    const heartbeatWasDormant = this.keepWarmTimer === undefined;
+    this.lastCallerActivityAt = Date.now();
+    this.resumeKeepWarm(false);
+    if (heartbeatWasDormant) this.pingKeepWarmIfDue();
     this.finalizePatient(); this.closing = undefined;
     this.finalizeOrphanCaption();
     // Provider captions have no turn IDs. Keep one owner through completion for
@@ -240,6 +252,7 @@ export class ReceptionSessionController implements SessionControllerApi {
     this.closing = undefined;
     const message = "Audio was unavailable. You can restart or ask for the answer again.";
     if (farewell) {
+      this.stopKeepWarmTimer();
       this.live?.close(); this.live = undefined; ++this.generation;
       this.state("error", message);
     } else this.state("connected", message);
@@ -291,7 +304,10 @@ export class ReceptionSessionController implements SessionControllerApi {
     if (tool === 'find_available_slots' && result.status !== 'offers') this.pendingOffers = [];
     if (result.status === 'offers' || Array.isArray(result.facts?.offers)) this.pendingOffers = (result.facts?.offers ?? result.snapshot?.offers ?? []).map((offer: any) => offer.offerId);
     if (tool === 'accept_offer' && result.status === 'needs_clarification' && typeof args.offerId === 'string' && result.snapshot?.offers?.some((offer: any) => offer.offerId === args.offerId) && result.snapshot?.draft?.acceptedOfferId !== args.offerId) this.pendingOffers = [args.offerId];
-    if (tool === 'end_session' && result.status === 'ok' && result.facts?.closeRequested === true && input.id === this.input.id) this.closing = { inputId: input.id, args: { outcome: args.outcome as ReceptionClose['outcome'], ...(typeof args.intent === 'string' ? { intent: args.intent } : {}) } };
+    if (tool === 'end_session' && result.status === 'ok' && result.facts?.closeRequested === true && input.id === this.input.id) {
+      this.closing = { inputId: input.id, args: { outcome: args.outcome as ReceptionClose['outcome'], ...(typeof args.intent === 'string' ? { intent: args.intent } : {}) } };
+      this.stopKeepWarmTimer();
+    }
     if (tool === 'commit_request' && ['committed','rejected'].includes(result.status) && this.unknown?.args.operationId === args.operationId) this.unknown = undefined;
   }
   private applyResult(result: Record<string, any>): void {
@@ -313,7 +329,7 @@ export class ReceptionSessionController implements SessionControllerApi {
     } catch { return undefined; }
   }
   async stop(notify = true): Promise<void> {
-    this.stopping = true; this.closing = undefined; this.interruptOutput();
+    this.stopping = true; this.stopKeepWarmTimer(); this.closing = undefined; this.interruptOutput();
     this.live?.close(); this.live = undefined; ++this.generation;
     if (!notify) return; // Disposal is transport loss, not domain cancellation.
     if (!this.snapshot || this.snapshot.status === "closed") { this.state("ended"); return; }
@@ -327,10 +343,11 @@ export class ReceptionSessionController implements SessionControllerApi {
       let result = object(await this.request(this.path("/close"), { eventId: id(), expectedVersion: this.snapshot!.version, ...args }, true)); this.applyResult(result);
       if (result.status === "conflict") { result = object(await this.request(this.path("/close"), { eventId: id(), expectedVersion: this.snapshot!.version, ...args }, true)); this.applyResult(result); }
       if (result.status !== "closed") throw new Error("Session closing is unresolved. Restart to check its state.");
-      this.stopping = true; this.closing = undefined; this.live?.close(); this.live = undefined; ++this.generation; this.state("ended");
+      this.stopping = true; this.stopKeepWarmTimer(); this.closing = undefined; this.live?.close(); this.live = undefined; ++this.generation; this.state("ended");
     } catch (error) { this.closing = undefined; this.fail(error); }
   }
   private async disconnected(): Promise<void> {
+    this.stopKeepWarmTimer();
     this.responseActivity++;
     this.live = undefined; ++this.generation; this.interruptOutput(); this.output = undefined; this.responseInput = undefined;
     const farewellFailed = Boolean(this.closing); this.closing = undefined;
@@ -340,11 +357,40 @@ export class ReceptionSessionController implements SessionControllerApi {
     try { this.snapshot = receptionSnapshotSchema.parse(await this.request(this.path())); if (this.unknown) await this.reconcile(this.unknown); await this.openProvider(); } catch (error) { this.fail(error); }
   }
   private path(suffix = ""): string { return `/api/reception/sessions/${encodeURIComponent(this.snapshot!.sessionId)}${suffix}`; }
+  private resumeKeepWarm(pingOnResume: boolean): void {
+    if (!this.snapshot || this.snapshot.status !== "active" || this.stopping || this.lastCallerActivityAt === undefined) return;
+    if (Date.now() - this.lastCallerActivityAt >= keepWarmIdleLimitMs) { this.stopKeepWarmTimer(); return; }
+    if (this.keepWarmTimer !== undefined) return;
+    this.keepWarmTimer = setInterval(() => this.keepWarmTick(), keepWarmIntervalMs);
+    if (pingOnResume) this.pingKeepWarmIfDue();
+  }
+  private keepWarmTick(): void {
+    if (this.lastCallerActivityAt === undefined || Date.now() - this.lastCallerActivityAt >= keepWarmIdleLimitMs) {
+      this.stopKeepWarmTimer();
+      return;
+    }
+    this.pingKeepWarmIfDue();
+  }
+  private pingKeepWarmIfDue(): void {
+    if (!this.snapshot || this.snapshot.status !== "active" || this.stopping || this.lastCallerActivityAt === undefined) return;
+    const now = Date.now();
+    if (now - this.lastCallerActivityAt >= keepWarmIdleLimitMs) { this.stopKeepWarmTimer(); return; }
+    if (this.keepWarmInFlight || (this.lastKeepWarmAt !== undefined && now - this.lastKeepWarmAt < keepWarmIntervalMs)) return;
+    this.lastKeepWarmAt = now;
+    const ping = this.request(this.path("/keep-warm")).then(() => undefined, () => undefined);
+    this.keepWarmInFlight = ping;
+    void ping.finally(() => { if (this.keepWarmInFlight === ping) this.keepWarmInFlight = undefined; });
+  }
+  private stopKeepWarmTimer(): void {
+    if (this.keepWarmTimer === undefined) return;
+    clearInterval(this.keepWarmTimer);
+    this.keepWarmTimer = undefined;
+  }
   private state(state: AgentSessionState, message?: string): void { this.callbacks.onState?.(state, message); }
   private diagnostic(event: string, details: Record<string, unknown>, durationMs?: number): void {
     this.callbacks.onDiagnostic?.({ event, sessionId: this.snapshot?.sessionId ?? "not-connected", turnId: this.inputSequence, timestamp: new Date().toISOString(), ...(durationMs !== undefined ? { durationMs } : {}), details: diagnosticDetails({ connectionId: this.connectionId, ...details }) as Record<string, unknown> });
   }
-  private fail(error: unknown): void { const message = error instanceof Error ? error.message : "Reception transport is unavailable. Restart to recover saved state."; this.state("error", message); this.callbacks.onError?.(message); }
+  private fail(error: unknown): void { this.stopKeepWarmTimer(); const message = error instanceof Error ? error.message : "Reception transport is unavailable. Restart to recover saved state."; this.state("error", message); this.callbacks.onError?.(message); }
   private async request(url: string, body?: unknown, retry = false): Promise<unknown> {
     for (let attempt = 0; ; attempt++) {
       const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 8000);

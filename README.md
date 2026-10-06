@@ -45,7 +45,7 @@ Patient identity is not accepted from the ID alone: the returned name must finis
 
 The long-lived Gemini key stays on Express. The app issues a single-use, short-lived Gemini token locked to the model, voice, instructions, transcriptions, and approved functions; the browser uses that token for its direct Live connection. The Live API tool calls themselves still go through the app's HTTP routes for data access.
 
-Reception route diagnostics record only HTTP method, normalized route (with session/event IDs replaced by placeholders), response status, and duration in milliseconds. They include no caller metadata, transcript, IDs, request contents, or database records. Session guards use a lightweight existence query; snapshot GET builds its authoritative database snapshot once.
+Reception route diagnostics record only HTTP method, normalized route (with session/event IDs replaced by placeholders), response status, and duration in milliseconds. They include no caller metadata, transcript, IDs, request contents, or database records. Session guards use a lightweight existence query; snapshot GET builds its authoritative database snapshot once. Session creation or restoration finishes its existing database work before Gemini Live connects. While caller activity is recent, the browser makes a best-effort, read-only session-existence check at most every two minutes. It stops after four minutes without a new caller turn and resumes with a throttled check when the caller speaks again. The check uses only the session guard's `SELECT 1`; it does not load a snapshot or write reception data. This adds a small read cost during active conversations and does not change Netlify Personal databases' five-minute idle-sleep setting.
 
 ## Developer-only diagnostics
 
