@@ -1,11 +1,38 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../../src/client/App";
+import { GEMINI_VOICES } from "../../src/shared/geminiVoices";
 import type { SessionControllerCallbacks } from "../../src/client/voice/session";
 import { PrototypeLogPanel } from '../../src/client/components/PrototypeLogPanel';
-afterEach(() => { cleanup(); localStorage.clear(); });
+afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
+
+it('loads the server voice default and sends a bilingual selection that locks during the session', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ voices: GEMINI_VOICES, defaultVoice: 'Fenrir' }))));
+  let callbacks: SessionControllerCallbacks = {};
+  const connect = vi.fn(async () => callbacks.onState?.('connected'));
+  render(<App createSessionController={cb => { callbacks = cb; return { connect, sendText: () => true, beginMicrophoneTurn: () => 1, sendMicrophoneAudio: () => undefined, endMicrophoneStream: () => undefined, stop: async () => callbacks.onState?.('ended') }; }} audioPlayer={{ prepare: async () => undefined, close: async () => undefined, stop: () => undefined, setMuted: () => undefined, play: async () => undefined }} />);
+  const selector = screen.getByRole('combobox', { name: 'Session voice · صوت الجلسة' });
+  await waitFor(() => expect(selector).toHaveValue('Fenrir'));
+  expect(screen.getByRole('option', { name: 'Aoede · Breezy · خفيف' })).toBeInTheDocument();
+  fireEvent.change(selector, { target: { value: 'Aoede' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+  await waitFor(() => expect(selector).toBeDisabled());
+  expect(connect).toHaveBeenCalledWith({ simulatedCallingNumber: '0500000000', voiceName: 'Aoede' });
+  act(() => callbacks.onState?.('error', 'Reconnect to continue'));
+  expect(selector).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'End session' }));
+  await waitFor(() => expect(selector).toBeEnabled());
+});
+
+it('keeps the server default available if voice options cannot be loaded', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+  const connect = vi.fn(async () => undefined);
+  render(<App createSessionController={() => ({ connect, sendText: () => true, beginMicrophoneTurn: () => 1, sendMicrophoneAudio: () => undefined, endMicrophoneStream: () => undefined, stop: async () => undefined })} audioPlayer={{ prepare: async () => undefined, close: async () => undefined, stop: () => undefined, setMuted: () => undefined, play: async () => undefined }} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+  await waitFor(() => expect(connect).toHaveBeenCalledWith({ simulatedCallingNumber: '0500000000' }));
+});
 
 it('updates caller bubbles by stable input ID even when an earlier final arrives late',()=>{
   let callbacks:SessionControllerCallbacks={};

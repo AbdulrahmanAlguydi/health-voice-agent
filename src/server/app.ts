@@ -10,7 +10,7 @@ import { createGeminiRouter } from "./routes/gemini";
 import type { GeminiTokenIssuer } from "./services/geminiTokenService";
 import { createOutputVerificationRouter } from "./routes/outputVerification";
 import type { OutputVerifier } from "../shared/outputVerification";
-import { createReceptionRouter } from "./reception/routes";
+import { createReceptionRouter, receptionTimingLogger } from "./reception/routes";
 import { ReceptionService } from "./reception/service";
 
 export type AppDependencies = {
@@ -25,6 +25,7 @@ export type AppDependencies = {
 export function createApp(dependencies: AppDependencies = {}) {
   const app = express();
 
+  app.use("/api/reception", receptionTimingLogger);
   app.use(express.json());
   app.use("/api/health", healthRouter);
   const reception = dependencies.receptionService ?? (dependencies.receptionPool ? new ReceptionService(dependencies.receptionPool) : undefined);

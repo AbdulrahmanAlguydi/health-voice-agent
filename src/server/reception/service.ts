@@ -81,6 +81,10 @@ export class ReceptionService {
     const snapshot=await this.getSnapshot(session.id); if(!snapshot) throw new Error("session_create_failed"); return snapshot;
   }
 
+  async hasSession(id: string): Promise<boolean> {
+    return Boolean(await this.one("SELECT 1 FROM reception_sessions WHERE id=$1", [id]));
+  }
+
   async getSnapshot(id: string): Promise<ReceptionSnapshot | undefined> {
     const s = await this.load(id); if (!s) return undefined;
     const now = this.clock();

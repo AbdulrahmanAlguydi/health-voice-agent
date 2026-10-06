@@ -55,7 +55,7 @@ export type SessionControllerCallbacks = {
 };
 
 export interface SessionControllerApi {
-  connect(options?: { simulatedCallingNumber?: string }): Promise<void>;
+  connect(options?: { simulatedCallingNumber?: string; voiceName?: string }): Promise<void>;
   beginMicrophoneTurn(): number;
   sendMicrophoneAudio(base64Pcm16: string): void;
   endMicrophoneStream(): void;

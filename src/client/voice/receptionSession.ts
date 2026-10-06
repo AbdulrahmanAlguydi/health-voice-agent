@@ -2,6 +2,7 @@ import type { LiveCallbacks, LiveServerMessage } from "@google/genai";
 import { receptionSnapshotSchema, type ReceptionCommand, type ReceptionMediaEvent, type ReceptionSnapshot, type ReceptionClose } from "../../shared/reception";
 import { createReceptionLiveConfig } from "../../shared/receptionPrompt";
 import { GEMINI_LIVE_MODEL } from "../../shared/geminiLiveConfig";
+import { isGeminiVoiceName, type GeminiVoiceName } from "../../shared/geminiVoices";
 import { normalizeSimulatedCallingNumber } from "../../shared/simulatedCallingNumber";
 import type { LiveConnectFunction, LiveSessionPort, SessionControllerApi, SessionControllerCallbacks, AgentSessionState } from "./session";
 import { diagnosticDetails } from "../logging/sessionDiagnostic";
@@ -46,6 +47,7 @@ export class ReceptionSessionController implements SessionControllerApi {
   private reconnectAttempted = false;
   private stopping = false;
   private language: "ar" | "en" = "ar";
+  private voiceName?: GeminiVoiceName;
 
   constructor(private readonly callbacks: ReceptionSessionOptions = {}) {
     this.fetcher = callbacks.fetch ?? globalThis.fetch.bind(globalThis);
@@ -54,13 +56,15 @@ export class ReceptionSessionController implements SessionControllerApi {
       return new GoogleGenAI({ apiKey: token, apiVersion: "v1beta" }).live.connect({ model, config, callbacks: cb });
     });
   }
-  async connect(options?: { simulatedCallingNumber?: string }): Promise<void> {
+  async connect(options?: { simulatedCallingNumber?: string; voiceName?: string }): Promise<void> {
     if (this.live) return;
     const callingNumber = normalizeSimulatedCallingNumber(options?.simulatedCallingNumber ?? "");
     this.stopping = false; this.reconnectAttempted = false; this.state("connecting");
     try {
       if (this.snapshot && this.snapshot.status !== 'closed') this.snapshot = receptionSnapshotSchema.parse(await this.request(this.path()));
       else {
+        if (options?.voiceName !== undefined && !isGeminiVoiceName(options.voiceName)) throw new Error("Unsupported Live voice.");
+        this.voiceName = options?.voiceName;
         this.unknown = undefined; this.media = []; this.pendingOffers = []; this.output = undefined; this.lastOutput = undefined; this.responseInput = undefined; this.microphoneCaptions = []; this.orphanCaption = undefined; this.microphoneStreamActive = false; this.closing = undefined; this.toolQueue = Promise.resolve(); this.inputSequence = 0; this.eventSequence = 0; this.language = 'ar';
         this.input = { id:id(), sequence:0, started:0, source:'text', attribution:'uncertain', transcript:'', finalized:true };
         this.snapshot = receptionSnapshotSchema.parse(await this.request('/api/reception/sessions', { callingNumber }));
@@ -70,14 +74,15 @@ export class ReceptionSessionController implements SessionControllerApi {
   }
   private async openProvider(): Promise<void> {
     const generation = ++this.generation; this.connectionId = id();
-    const token = object(await this.request("/api/gemini/live-token", { sessionId: this.snapshot!.sessionId }));
-    if (typeof token.token !== "string" || token.model !== GEMINI_LIVE_MODEL || typeof token.voiceName !== "string" || !Number.isFinite(Date.parse(token.expiresAt)) || Date.parse(token.expiresAt) <= Date.now()) throw new Error("The server returned an invalid Live credential.");
+    const token = object(await this.request("/api/gemini/live-token", { sessionId: this.snapshot!.sessionId, voiceName: this.voiceName }));
+    if (typeof token.token !== "string" || token.model !== GEMINI_LIVE_MODEL || !isGeminiVoiceName(token.voiceName) || (this.voiceName !== undefined && token.voiceName !== this.voiceName) || !Number.isFinite(Date.parse(token.expiresAt)) || Date.parse(token.expiresAt) <= Date.now()) throw new Error("The server returned an invalid Live credential.");
+    this.voiceName = token.voiceName;
     const callbacks: LiveCallbacks = {
       onmessage: (message) => { if (generation === this.generation && !this.stopping) this.onMessage(message); },
       onclose: () => { if (generation === this.generation && !this.stopping) void this.disconnected(); },
       onerror: () => { if (generation === this.generation && !this.stopping) void this.disconnected(); },
     };
-    const live = await this.liveConnect(token.token, token.model, createReceptionLiveConfig(token.voiceName, this.snapshot), callbacks);
+    const live = await this.liveConnect(token.token, token.model, createReceptionLiveConfig(this.voiceName, this.snapshot), callbacks);
     if (generation !== this.generation || this.stopping) { live.close(); return; }
     this.live = live; this.state("connected");
     this.diagnostic("reception_connected", { connectionId: this.connectionId, snapshotVersion: this.snapshot!.version });

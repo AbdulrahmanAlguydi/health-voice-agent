@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { GeminiTokenIssuer } from "../services/geminiTokenService";
 import type { ReceptionSnapshot } from "../../shared/reception";
+import { GEMINI_VOICES, isGeminiVoiceName, resolveGeminiVoiceDefault } from "../../shared/geminiVoices";
 
 const WINDOW_MS = 60_000;
 const MAX_TOKENS_PER_WINDOW = 8;
@@ -9,9 +10,19 @@ export function createGeminiRouter(issueToken?: GeminiTokenIssuer, getSnapshot?:
   const router = Router();
   const requests = new Map<string, { count: number; resetAt: number }>();
 
+  router.get("/voices", (_request, response) => {
+    response.setHeader("Cache-Control", "no-store, max-age=0");
+    response.json({ voices: GEMINI_VOICES, defaultVoice: issueToken?.defaultVoiceName ?? resolveGeminiVoiceDefault(process.env.GEMINI_VOICE) });
+  });
+
   router.post("/live-token", async (request, response) => {
     response.setHeader("Cache-Control", "no-store, max-age=0");
     response.setHeader("Pragma", "no-cache");
+    const voiceName = request.body?.voiceName;
+    if (voiceName !== undefined && !isGeminiVoiceName(voiceName)) {
+      response.status(400).json({ error: "Unsupported Live voice." });
+      return;
+    }
     if (!issueToken) {
       response.status(503).json({ error: "Live voice is not configured on this server." });
       return;
@@ -43,7 +54,7 @@ export function createGeminiRouter(issueToken?: GeminiTokenIssuer, getSnapshot?:
     );
 
     try {
-      const token = await issueToken(snapshot);
+      const token = await issueToken(snapshot, voiceName);
       response.status(200).json({ ...token, model: "gemini-3.8-live" });
     } catch {
       // Never echo provider errors: SDK errors may contain request details or credentials.

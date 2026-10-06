@@ -6,6 +6,37 @@ import { createGeminiTokenIssuer } from "../../src/server/services/geminiTokenSe
 import { createGeminiLiveConfig } from "../../src/shared/geminiLiveConfig";
 
 describe("POST /api/gemini/live-token", () => {
+  it("exposes only curated voice options and the configured default", async () => {
+    const create = vi.fn().mockResolvedValue({ name: "token" });
+    const issueToken = createGeminiTokenIssuer({ create }, undefined, "Fenrir");
+    const response = await request(createApp({ geminiTokenIssuer: issueToken })).get("/api/gemini/voices");
+    expect(response.status).toBe(200);
+    expect(Object.keys(response.body).sort()).toEqual(["defaultVoice", "voices"]);
+    expect(response.body.defaultVoice).toBe("Fenrir");
+    expect(response.body.voices).toHaveLength(30);
+    expect(new Set(response.body.voices.map((voice: any) => voice.name)).size).toBe(30);
+    expect(response.body.voices).toContainEqual({ name: "Kore", descriptionEn: "Firm", descriptionAr: "حازم" });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("uses the selected voice in the provider constraints and token response", async () => {
+    const create = vi.fn().mockResolvedValue({ name: "token" });
+    const issuer = createGeminiTokenIssuer({ create }, undefined, "Fenrir");
+    const response = await request(createApp({ geminiTokenIssuer: issuer })).post("/api/gemini/live-token").send({ voiceName: "Aoede" });
+    expect(response.status).toBe(200);
+    expect(response.body.voiceName).toBe("Aoede");
+    expect(create.mock.calls[0][0].config.liveConnectConstraints.config.speechConfig).toEqual({ voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } });
+    const defaultResponse = await request(createApp({ geminiTokenIssuer: issuer })).post("/api/gemini/live-token").send({});
+    expect(defaultResponse.body.voiceName).toBe("Fenrir");
+  });
+
+  it.each(["unknown", "", "kore", " Kore ", null, 42, { name: "Kore" }])("rejects unsupported or malformed voice %j before issuing a token", async (voiceName) => {
+    const create = vi.fn().mockResolvedValue({ name: "token" });
+    const response = await request(createApp({ geminiTokenIssuer: createGeminiTokenIssuer({ create }) })).post("/api/gemini/live-token").send({ voiceName });
+    expect(response.status).toBe(400);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("returns only a short-lived token and never caches it", async () => {
     const issueToken = vi.fn().mockResolvedValue({
       token: "ephemeral-token-secret",

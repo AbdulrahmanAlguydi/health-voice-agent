@@ -33,6 +33,52 @@ async function harness(options: Record<string, unknown> = {}) {
 const tool = (name: string, id = name, args: Record<string, unknown> = {}) => ({ toolCall: { functionCalls: [{ name, id, args }] } });
 const receptionFixtures: Array<{ dispose: () => Promise<void> }> = [];
 afterEach(async () => { await Promise.all(receptionFixtures.splice(0).map(fixture => fixture.dispose())); });
+
+it("pins the selected voice across automatic and manual reconnects, then permits a new session voice", async () => {
+  let callbacks: LiveCallbacks | undefined;
+  let current = snapshot();
+  const requests: any[] = [];
+  const voices: string[] = [];
+  const port = { sendRealtimeInput: vi.fn(), sendClientContent: vi.fn(), sendToolResponse: vi.fn(), close: vi.fn() };
+  const fetch = vi.fn(async (url: any, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    if (url === "/api/gemini/live-token") {
+      requests.push(body);
+      return json({ token: "token", model: "gemini-3.8-live", voiceName: body.voiceName ?? "Kore", expiresAt: new Date(Date.now() + 60000).toISOString() });
+    }
+    if (String(url).endsWith("/close")) { current = { ...current, status: "closed" }; return json({ status: "closed", snapshot: current }); }
+    if (url === "/api/reception/sessions") current = snapshot();
+    return json(current);
+  });
+  const controller = new ReceptionSessionController({ fetch, connectLive: async (_token, _model, config, cb) => {
+    voices.push(config.speechConfig!.voiceConfig!.prebuiltVoiceConfig!.voiceName!);
+    callbacks = cb; return port;
+  } });
+  await controller.connect({ voiceName: "Aoede" });
+  callbacks!.onclose?.({} as any);
+  await vi.waitFor(() => expect(voices).toHaveLength(2));
+  await controller.stop(false);
+  await controller.connect({ voiceName: "Fenrir" });
+  expect(voices).toEqual(["Aoede", "Aoede", "Aoede"]);
+  expect(requests.every(body => body.voiceName === "Aoede")).toBe(true);
+  await controller.stop();
+  await controller.connect({ voiceName: "Fenrir" });
+  expect(voices).toEqual(["Aoede", "Aoede", "Aoede", "Fenrir"]);
+});
+
+it("pins a server-chosen default on reconnect and rejects a credential with a changed voice", async () => {
+  const h = await harness();
+  h.closeProvider();
+  await vi.waitFor(() => expect(h.requests.filter(r => r.url.endsWith('live-token'))).toHaveLength(2));
+  expect(h.requests.filter(r => r.url.endsWith('live-token'))[1].body.voiceName).toBe('Kore');
+  await h.controller.stop(false);
+  const original = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation(async (url: any, init?: RequestInit) => url === '/api/gemini/live-token'
+    ? json({ token: 'token', model: 'gemini-3.8-live', voiceName: 'Fenrir', expiresAt: new Date(Date.now() + 60000).toISOString() })
+    : original(url, init));
+  await h.controller.connect();
+  expect(h.controller.sendText('must stay disconnected')).toBe(false);
+});
 async function createReceptionFixture() {
   const fixture = await createReceptionTestDatabase();
   receptionFixtures.push(fixture);

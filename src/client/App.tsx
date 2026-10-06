@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { normalizeSimulatedCallingNumber } from "../shared/simulatedCallingNumber";
+import { GEMINI_VOICES, isGeminiVoiceName } from "../shared/geminiVoices";
 import type { ApprovedOutput } from "./agent/guardrails";
 import type { CaptureOptions, MicrophoneCapture, PcmAudioPlayer } from "./voice/audio";
 import { MicrophoneCapture as BrowserMicrophoneCapture, PcmAudioPlayer as BrowserPcmAudioPlayer } from "./voice/audio";
@@ -53,6 +54,7 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
   const [sessionState, setSessionState] = useState<AgentSessionState>("idle");
   const [notice, setNotice] = useState("");
   const [callingNumber, setCallingNumber] = useState("0500000000");
+  const [voiceName, setVoiceName] = useState("");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [logEntries, setLogEntries] = useState(() => diagnosticsEnabled ? loadPrototypeLog() : []);
   const [logNotice, setLogNotice] = useState("");
@@ -73,6 +75,19 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
   const recordedOutputs = useRef(new Map<string, RecordedOutput>());
   const streamQueues = useRef(new Map<string, Promise<void>>());
   const factories = useRef({ createSessionController, createMicrophoneCapture });
+
+  useEffect(() => {
+    const abort = new AbortController();
+    void fetch("/api/gemini/voices", { signal: abort.signal })
+      .then(async response => {
+        if (!response.ok) return;
+        const options = await response.json();
+        if (!abort.signal.aborted && isGeminiVoiceName(options.defaultVoice)) {
+          setVoiceName(current => current || options.defaultVoice);
+        }
+      }).catch(() => undefined);
+    return () => abort.abort();
+  }, []);
 
   const appendLog = (type: PrototypeLogEntryType, message: string, diagnostic?: SessionDiagnostic) => {
     if (!diagnosticsEnabled) return;
@@ -282,7 +297,7 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
     try {
       const simulatedCallingNumber = normalizeSimulatedCallingNumber(callingNumber);
       if (!muted) void player.prepare().catch((error: unknown) => setNotice(error instanceof Error ? error.message : "Audio playback is unavailable."));
-      await sessionRef.current?.connect({ simulatedCallingNumber });
+      await sessionRef.current?.connect({ simulatedCallingNumber, ...(voiceName ? { voiceName } : {}) });
     } catch (error) {
       if (error instanceof Error) setNotice(error.message);
     }
@@ -369,6 +384,15 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
           <h2>Talk naturally, or type a test message</h2>
           <p>English and Arabic are supported. You can mute spoken replies and continue reading the transcript.</p>
           <div className="calling-number-field">
+            <label htmlFor="session-voice">Session voice · <span lang="ar" dir="rtl">صوت الجلسة</span></label>
+            <select id="session-voice" value={voiceName} onChange={event => setVoiceName(event.target.value)}
+              disabled={sessionState !== "idle" && sessionState !== "ended"} aria-describedby="session-voice-help">
+              <option value="">Server default · صوت الخادم الافتراضي</option>
+              {GEMINI_VOICES.map(voice => <option key={voice.name} value={voice.name}>{voice.name} · {voice.descriptionEn} · {voice.descriptionAr}</option>)}
+            </select>
+            <small id="session-voice-help">Choose before starting. The same voice speaks Arabic and English and stays with this session on reconnect. <span lang="ar" dir="rtl">اختَر الصوت قبل البدء؛ يبقى نفسه عند إعادة الاتصال.</span></small>
+          </div>
+          <div className="calling-number-field">
             <label htmlFor="calling-number">Simulated calling number</label>
             <input id="calling-number" type="tel" inputMode="tel" dir="ltr" autoComplete="off"
               value={callingNumber} onChange={(event) => setCallingNumber(event.target.value)}
@@ -378,9 +402,12 @@ export function App({ showDiagnostics, createSessionController, createMicrophone
         </div>
         <div className="control-buttons">
           {!connected ? (
-            <button className="button button-primary" onClick={() => void startSession()} disabled={sessionState === "connecting"}>
-              {sessionState === "connecting" ? "Connecting…" : "Start session"}
-            </button>
+            <>
+              <button className="button button-primary" onClick={() => void startSession()} disabled={sessionState === "connecting"}>
+                {sessionState === "connecting" ? "Connecting…" : "Start session"}
+              </button>
+              {sessionState === "error" ? <button className="button button-quiet" onClick={() => void endSession()}>End session</button> : null}
+            </>
           ) : (
             <>
               <button className={`button ${microphoneOn ? "button-listening" : "button-secondary"}`} onClick={() => void toggleMicrophone()}>

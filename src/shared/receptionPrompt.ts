@@ -1,5 +1,6 @@
 import type { FunctionDeclaration, LiveConnectConfig } from '@google/genai';
 import type { ReceptionSnapshot } from './reception';
+import { DEFAULT_GEMINI_VOICE } from './geminiVoices';
 
 const string = { type: 'string' };
 const boolean = { type: 'boolean' };
@@ -52,6 +53,6 @@ export function buildReceptionSystemInstruction(snapshot?: ReceptionSnapshot): s
   const draft = snapshot.draft ? { ...snapshot.draft, contact } : undefined;
   return `${receptionSystemInstruction}\n\nSERVER RECEPTION CONTEXT\n${JSON.stringify({ sessionId: snapshot.sessionId, version: snapshot.version, status: snapshot.status, clock: snapshot.clock, directory: snapshot.directory, clinic: snapshot.clinic, patientName: snapshot.patientName, contact, draft, offers: snapshot.offers, operations: snapshot.operations })}`;
 }
-export function createReceptionLiveConfig(voiceName = 'Kore', snapshot?: ReceptionSnapshot): LiveConnectConfig {
+export function createReceptionLiveConfig(voiceName: string = DEFAULT_GEMINI_VOICE, snapshot?: ReceptionSnapshot): LiveConnectConfig {
   return { responseModalities: ['AUDIO' as NonNullable<LiveConnectConfig['responseModalities']>[number]], inputAudioTranscription: { languageCodes: ['ar-SA', 'en-US'] }, outputAudioTranscription: {}, systemInstruction: buildReceptionSystemInstruction(snapshot), speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } }, maxOutputTokens: 1024, tools: [{ functionDeclarations: receptionTools }] };
 }
