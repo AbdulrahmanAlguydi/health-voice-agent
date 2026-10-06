@@ -72,7 +72,7 @@ Session creation/restoration starts the keep-warm window after its authoritative
 ## Review Triage Log
 
 - verdict: medium; route: patch. Evidence: when a closed controller starts a fresh session after four minutes, the old `lastCallerActivityAt` remains in the past, so both keep-warm arming checks immediately stop; `App.tsx` reuses the controller after ending a session. Reset the activity timestamp for a fresh session.
-- verdict: false; route: reject. Evidence: review is intentionally before final verification/deployment, so the local test/build and live-smoke checklist had not yet been recorded when the reviewer read the plan. The review finding asks only for a plan update; record actual results after those checks rather than treating this as a code defect.
+- verdict: false; route: reject. Evidence: review is intentionally before final verification/deployment, so the local test/build and live-smoke checklist had not yet been recorded when the reviewer read the plan. The finding asks only for a plan update, not a code correction; actual results are now recorded below.
 
 ## Design Notes
 
@@ -88,6 +88,10 @@ Netlify documents a five-minute idle sleep default for Personal databases and st
 - After pushing `codex/gemini-health-agent`, inspect the Netlify deploy and test the live health endpoint, create a synthetic session, exercise a read-only keep-warm request after idleness, close it, and verify no appointment was created.
 
 **Manual checks:**
-- Measure public API health and keep-warm response duration before/after the idle window; report that this smoke test does not prove end-to-end doctor-lookup latency unless the dialogue is also timed.
+- Public app and production JS bundle both returned HTTP 200; the served bundle contains `/keep-warm`. `/api/health` returned `{"status":"ok"}`.
+- Created two empty synthetic sessions on the production DB branch, allowed each to sit idle for more than six minutes without database calls, and received `{status:"ok"}` from the keep-warm route. Paired route round trips were 627 ms immediately after creation and 3,013 ms after the idle interval; a separate post-idle probe was 1,412 ms. Both sessions closed successfully; final snapshots had zero offers and zero operations. No booking was created.
+- These are end-to-end HTTP timings, not isolated database compute timings; they include Netlify Function startup, database connection, and network overhead. No voice/doctor lookup was exercised in this smoke test, so it does not establish the latency of an actual dialogue turn.
 
-**Local results:** Focused route/client tests passed (56/56); full suite passed (55 files, 679 passed, 1 skipped); `npm run build` passed TypeScript checking and Vite production build; `git diff --check` passed. Live checks remain pending until push/deploy.
+**Local results:** Focused route/client tests passed (56/56); full suite passed (55 files, 679 passed, 1 skipped); `npm run build` passed TypeScript checking and Vite production build; `git diff --check` passed.
+
+**Deploy results:** Netlify production deploy `6ac45c55c857e90008be4bf3` is ready for commit `35899d08961d2adec8b1eacb94435cba2c63029b` on `codex/gemini-health-agent`, using the `production` database branch.
